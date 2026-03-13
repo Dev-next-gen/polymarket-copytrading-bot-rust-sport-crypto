@@ -1,0 +1,14 @@
+/root/@frogan/fastest-polymarket-copytrading-bot-sport-crypto/frontend/target/release/deps/serde-ee71953a63d19975.d: /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /root/@frogan/fastest-polymarket-copytrading-bot-sport-crypto/frontend/target/release/build/serde-97c46180880da27b/out/private.rs
+
+/root/@frogan/fastest-polymarket-copytrading-bot-sport-crypto/frontend/target/release/deps/libserde-ee71953a63d19975.rlib: /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /root/@frogan/fastest-polymarket-copytrading-bot-sport-crypto/frontend/target/release/build/serde-97c46180880da27b/out/private.rs
+
+/root/@frogan/fastest-polymarket-copytrading-bot-sport-crypto/frontend/target/release/deps/libserde-ee71953a63d19975.rmeta: /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /root/@frogan/fastest-polymarket-copytrading-bot-sport-crypto/frontend/target/release/build/serde-97c46180880da27b/out/private.rs
+
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs:
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs:
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs:
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs:
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs:
+/root/@frogan/fastest-polymarket-copytrading-bot-sport-crypto/frontend/target/release/build/serde-97c46180880da27b/out/private.rs:
+
+# env-dep:OUT_DIR=/root/@frogan/fastest-polymarket-copytrading-bot-sport-crypto/frontend/target/release/build/serde-97c46180880da27b/out
