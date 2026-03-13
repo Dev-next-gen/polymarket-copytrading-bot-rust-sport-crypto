@@ -75,8 +75,8 @@ fn Layout(
                 <div class="flex flex-1 min-h-0 overflow-hidden gap-0">
                     <main class="flex-1 min-w-0 overflow-hidden flex flex-col">{main()}</main>
                     {match aside {
-                        Some(a) => view! { <aside class="w-[420px] min-w-[320px] shrink-0 overflow-hidden flex flex-col p-3">{a()}</aside> }.into_any(),
-                        None => view! {}.into_any(),
+                        Some(a) => view! { <aside class="w-[420px] min-w-[320px] shrink-0 overflow-hidden flex flex-col p-3">{a()}</aside> }.into_view(),
+                        None => view! { <div style="display: none;"></div> }.into_view(),
                     }}
                 </div>
             </div>
@@ -203,15 +203,15 @@ fn DashboardPage(state: Option<BotState>) -> impl IntoView {
                                     .collect_view()}
                             </div>
                         }
-                            .into_any()
+                            .into_view()
                     } else {
-                        view! {}.into_any()
+                        view! {}.into_view()
                     }}
                 </div>
                 <div class="rounded-lg border border-[#333] bg-[#1a1a1a] p-3">
                     <span class="text-xs text-[#666]">"Recent activity"</span>
                     {if recent.is_empty() {
-                        view! { <p class="text-[#666] text-sm">"No activity yet."</p> }.into_any()
+                        view! { <p class="text-[#666] text-sm">"No activity yet."</p> }.into_view()
                     } else {
                         view! {
                             <ul class="text-[#aaa] text-sm mt-1 space-y-1">
@@ -228,7 +228,7 @@ fn DashboardPage(state: Option<BotState>) -> impl IntoView {
                                     .collect_view()}
                             </ul>
                         }
-                            .into_any()
+                            .into_view()
                     }}
                 </div>
             </div>
@@ -307,7 +307,7 @@ fn PositionsPanel(
         <div class="rounded-lg border border-[#333] bg-[#1a1a1a] p-3 flex-1 min-h-0 flex flex-col overflow-hidden">
             <h3 class="text-[11px] text-[#888] uppercase mb-2">"Live positions"</h3>
             {if users.is_empty() {
-                view! { <p class="text-[#666] text-xs">"No targets"</p> }.into_any()
+                view! { <p class="text-[#666] text-xs">"No targets"</p> }.into_view()
             } else {
                 view! {
                     <div class="overflow-y-auto overflow-x-hidden flex-1 min-h-0">
@@ -377,7 +377,7 @@ fn PositionsPanel(
                             .collect_view()}
                     </div>
                 }
-                    .into_any()
+                    .into_view()
             }}
         </div>
     }
@@ -390,32 +390,29 @@ pub fn App() -> impl IntoView {
 
     create_effect(move |_| {
         spawn_local(async move {
-            match fetch_state().await {
-                Ok(s) => set_state.set(Some(s)),
-                Err(_) => {}
+            if let Ok(s) = fetch_state().await {
+                set_state.set(Some(s));
             }
         });
     });
 
     create_effect(move |_| {
-        let _ = page();
-        let interval = gloo_utils::window()
-            .set_interval_with_callback_and_timeout_and_arguments(
-                move || {
-                    spawn_local(async move {
+        use std::sync::Once;
+        static START: Once = Once::new();
+        let set_state = set_state.clone();
+        START.call_once(move || {
+            let set_state = set_state.clone();
+            let _ = gloo_timers::callback::Interval::new(3000, move || {
+                spawn_local({
+                    let set_state = set_state.clone();
+                    async move {
                         if let Ok(s) = fetch_state().await {
                             set_state.set(Some(s));
                         }
-                    });
-                },
-                3000,
-                &[],
-            );
-        move || {
-            if let Some(h) = interval.ok() {
-                let _ = gloo_utils::window().clear_interval_with_handle(h);
-            }
-        }
+                    }
+                });
+            });
+        });
     });
 
     let state_slice = move || state.get();
@@ -491,12 +488,19 @@ pub fn App() -> impl IntoView {
                                 _delta_animation_sec=ui().delta_animation_sec
                             />
                         }
-                            .into_any()
+                            .into_view()
                     } else {
-                        view! {}.into_any()
+                        view! { <div class="hidden"/> }.into_view()
                     }
                 }}
             })
         />
     }
+}
+
+#[cfg(feature = "csr")]
+#[wasm_bindgen::prelude::wasm_bindgen(start)]
+pub fn main() {
+    console_error_panic_hook::set_once();
+    leptos::mount_to_body(App);
 }
