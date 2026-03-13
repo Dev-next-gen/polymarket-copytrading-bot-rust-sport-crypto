@@ -6,6 +6,10 @@ edition = "2021"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[features]
+default = ["csr"]
+csr = []
+
 [dependencies]
 leptos = { version = "0.6", features = ["csr", "serde"] }
 serde = { version = "1.0", features = ["derive"] }

@@ -60,22 +60,22 @@ async fn fetch_state() -> Result<BotState, String> {
 
 #[component]
 fn Layout(
-    nav: Children,
-    header: Children,
-    main: Children,
-    #[prop(optional)] aside: Option<Children>,
+    nav: impl IntoView + 'static,
+    header: impl IntoView + 'static,
+    main: impl IntoView + 'static,
+    #[prop(optional)] aside: Option<impl IntoView + 'static>,
 ) -> impl IntoView {
     view! {
         <div class="flex h-screen max-h-screen overflow-hidden">
             <nav class="w-[140px] shrink-0 border border-[#333] bg-[#1a1a1a] flex flex-col">
-                {nav()}
+                {nav}
             </nav>
             <div class="flex flex-1 min-w-0 flex-col overflow-hidden p-3 gap-2">
-                <header class="shrink-0 flex items-center gap-3">{header()}</header>
+                <header class="shrink-0 flex items-center gap-3">{header}</header>
                 <div class="flex flex-1 min-h-0 overflow-hidden gap-0">
-                    <main class="flex-1 min-w-0 overflow-hidden flex flex-col">{main()}</main>
+                    <main class="flex-1 min-w-0 overflow-hidden flex flex-col">{main}</main>
                     {match aside {
-                        Some(a) => view! { <aside class="w-[420px] min-w-[320px] shrink-0 overflow-hidden flex flex-col p-3">{a()}</aside> }.into_view(),
+                        Some(a) => view! { <aside class="w-[420px] min-w-[320px] shrink-0 overflow-hidden flex flex-col p-3">{a}</aside> }.into_view(),
                         None => view! { <div style="display: none;"></div> }.into_view(),
                     }}
                 </div>
@@ -88,7 +88,7 @@ type Page = &'static str;
 const PAGES: &[(Page, &str)] = &[("dashboard", "Dashboard"), ("log", "Log"), ("setting", "Settings")];
 
 #[component]
-fn Sidebar(current: Page, on_navigate: Callback<Page>) -> impl IntoView {
+fn Sidebar(current: Page, on_navigate: Callback<&'static str>) -> impl IntoView {
     view! {
         <div class="flex flex-col py-2">
             {PAGES
@@ -116,69 +116,86 @@ fn Sidebar(current: Page, on_navigate: Callback<Page>) -> impl IntoView {
 }
 
 #[component]
-fn LogPage(logs: Vec<TradeLog>) -> impl IntoView {
-    let rows: Vec<_> = logs.into_iter().rev().collect();
+fn LogPage(logs: impl Fn() -> Vec<TradeLog> + 'static) -> impl IntoView {
     view! {
-        <div class="flex-1 overflow-auto overflow-x-auto min-h-0 flex flex-col">
-            <p class="text-[11px] text-[#666] mb-2 shrink-0">
-                "Showing " {rows.len()} " log entries (newest first)."
-            </p>
-            <table class="w-full border-collapse text-xs">
-                <thead>
-                    <tr>
-                        <th class="p-2 text-left text-[#888] font-medium border-b border-[#333]">"Time"</th>
-                        <th class="p-2 text-left text-[#888] font-medium border-b border-[#333]">"Tag"</th>
-                        <th class="p-2 text-left text-[#888] font-medium border-b border-[#333]">"Side"</th>
-                        <th class="p-2 text-left text-[#888] font-medium border-b border-[#333]">"Outcome"</th>
-                        <th class="p-2 text-left text-[#888] font-medium border-b border-[#333]">"Size"</th>
-                        <th class="p-2 text-left text-[#888] font-medium border-b border-[#333]">"Price"</th>
-                        <th class="p-2 text-left text-[#888] font-medium border-b border-[#333]">"Market"</th>
-                        <th class="p-2 text-left text-[#888] font-medium border-b border-[#333]">"Target"</th>
-                        <th class="p-2 text-left text-[#888] font-medium border-b border-[#333]">"Status"</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {rows
+        {move || {
+            let rows: Vec<_> = logs().into_iter().rev().collect();
+            view! {
+                <div class="flex-1 overflow-auto overflow-x-auto min-h-0 flex flex-col">
+                    <p class="text-[11px] text-[#666] mb-2 shrink-0">
+                        "Showing " {rows.len()} " log entries (newest first)."
+                    </p>
+                    <table class="w-full border-collapse text-xs">
+                        <thead>
+                            <tr>
+                                <th class="p-2 text-left text-[#888] font-medium border-b border-[#333]">"Time"</th>
+                                <th class="p-2 text-left text-[#888] font-medium border-b border-[#333]">"Tag"</th>
+                                <th class="p-2 text-left text-[#888] font-medium border-b border-[#333]">"Side"</th>
+                                <th class="p-2 text-left text-[#888] font-medium border-b border-[#333]">"Outcome"</th>
+                                <th class="p-2 text-left text-[#888] font-medium border-b border-[#333]">"Size"</th>
+                                <th class="p-2 text-left text-[#888] font-medium border-b border-[#333]">"Price"</th>
+                                <th class="p-2 text-left text-[#888] font-medium border-b border-[#333]">"Market"</th>
+                                <th class="p-2 text-left text-[#888] font-medium border-b border-[#333]">"Target"</th>
+                                <th class="p-2 text-left text-[#888] font-medium border-b border-[#333]">"Status"</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {rows
                         .into_iter()
                         .enumerate()
                         .map(|(i, r)| {
-                            let time_short = if r.time.len() >= 19 { &r.time[11..19] } else { &r.time[..] };
+                            let time_short = if r.time.len() >= 19 {
+                                r.time[11..19].to_string()
+                            } else {
+                                r.time.clone()
+                            };
                             let side_class = if r.side == "BUY" { "text-[#6f6]" } else { "text-[#f66]" };
+                            let r_time = r.time.clone();
+                            let r_tag = r.tag.clone();
+                            let r_side = r.side.clone();
+                            let r_outcome = r.outcome.clone();
+                            let r_size = r.size.clone();
+                            let r_price = r.price.clone();
+                            let r_slug = r.slug.clone();
+                            let r_target = r.target_address.clone();
+                            let r_status = r.copy_status.clone();
                             view! {
-                                <tr key=format!("{:?}-{}", r.time, i) class="border-b border-[#333]">
+                                <tr key=format!("{:?}-{}", r_time, i) class="border-b border-[#333]">
                                     <td class="p-2">{time_short}</td>
-                                    <td class="p-2">{r.tag}</td>
-                                    <td class=format!("p-2 font-medium {}", side_class)>{r.side}</td>
-                                    <td class="p-2">{r.outcome}</td>
+                                    <td class="p-2">{r_tag}</td>
+                                    <td class=format!("p-2 font-medium {}", side_class)>{r_side}</td>
+                                    <td class="p-2">{r_outcome}</td>
                                     <td class="p-2 tabular-nums">
-                                        {if let Ok(n) = r.size.parse::<f64>() {
+                                        {if let Ok(n) = r_size.parse::<f64>() {
                                             format!("{:.2}", n)
                                         } else {
-                                            r.size
+                                            r_size
                                         }}
                                     </td>
-                                    <td class="p-2">{r.price}</td>
-                                    <td class="p-2 text-[#ccc] break-words">{r.slug}</td>
+                                    <td class="p-2">{r_price}</td>
+                                    <td class="p-2 text-[#ccc] break-words">{r_slug}</td>
                                     <td class="p-2 font-mono text-[11px] text-[#8af] break-all">
-                                        {r.target_address.unwrap_or_default()}
+                                        {r_target.unwrap_or_default()}
                                     </td>
-                                    <td class="p-2">{r.copy_status.unwrap_or_default()}</td>
+                                    <td class="p-2">{r_status.unwrap_or_default()}</td>
                                 </tr>
                             }
                         })
                         .collect_view()}
-                </tbody>
-            </table>
-        </div>
+                        </tbody>
+                    </table>
+                </div>
+            }
+        }}
     }
 }
 
 #[component]
 fn DashboardPage(state: Option<BotState>) -> impl IntoView {
-    let mode = state.as_ref().map(|s| s.status.mode.as_str()).unwrap_or("—");
+    let mode = state.as_ref().map(|s| s.status.mode.clone()).unwrap_or_else(|| "—".to_string());
     let targets = state.as_ref().map(|s| s.status.targets).unwrap_or(0);
     let addresses = state.as_ref().and_then(|s| s.status.target_addresses.clone()).unwrap_or_default();
-    let recent: Vec<_> = state
+    let recent: Vec<TradeLog> = state
         .as_ref()
         .map(|s| s.logs.iter().rev().take(5).cloned().collect())
         .unwrap_or_default();
@@ -189,7 +206,7 @@ fn DashboardPage(state: Option<BotState>) -> impl IntoView {
             <div class="grid gap-3 max-w-md">
                 <div class="rounded-lg border border-[#333] bg-[#1a1a1a] p-3">
                     <span class="text-xs text-[#666]">"Mode"</span>
-                    <p class="text-[#aaa]">{mode}</p>
+                    <p class="text-[#aaa]">{mode.clone()}</p>
                 </div>
                 <div class="rounded-lg border border-[#333] bg-[#1a1a1a] p-3">
                     <span class="text-xs text-[#666]">"Targets"</span>
@@ -217,14 +234,22 @@ fn DashboardPage(state: Option<BotState>) -> impl IntoView {
                             <ul class="text-[#aaa] text-sm mt-1 space-y-1">
                                 {recent
                                     .into_iter()
-                                    .map(|r| {
-                                        let t = if r.time.len() >= 19 { &r.time[11..19] } else { &r.time[..] };
-                                        view! {
-                                            <li>
-                                                {t} " " {r.side} " " {r.outcome} " @ " {r.price} " — " {r.slug}
-                                            </li>
-                                        }
-                                    })
+                    .map(|r| {
+                        let t = if r.time.len() >= 19 {
+                            r.time[11..19].to_string()
+                        } else {
+                            r.time.clone()
+                        };
+                        let s = r.side.clone();
+                        let o = r.outcome.clone();
+                        let p = r.price.clone();
+                        let sl = r.slug.clone();
+                        view! {
+                            <li>
+                                {t} " " {s} " " {o} " @ " {p} " — " {sl}
+                            </li>
+                        }
+                    })
                                     .collect_view()}
                             </ul>
                         }
@@ -238,7 +263,7 @@ fn DashboardPage(state: Option<BotState>) -> impl IntoView {
 
 #[component]
 fn SettingsPage(state: Option<BotState>) -> impl IntoView {
-    let mode = state.as_ref().map(|s| s.status.mode.as_str()).unwrap_or("—");
+    let mode = state.as_ref().map(|s| s.status.mode.clone()).unwrap_or_else(|| "—".to_string());
     let targets = state.as_ref().map(|s| s.status.targets).unwrap_or(0);
     let addresses = state
         .as_ref()
@@ -248,7 +273,8 @@ fn SettingsPage(state: Option<BotState>) -> impl IntoView {
         .as_ref()
         .and_then(|s| s.status.wallet.clone())
         .unwrap_or_else(|| "—".to_string());
-    let ui = state.as_ref().map(|s| &s.ui).unwrap_or(&UiConfig::default());
+    let default_ui = UiConfig::default();
+    let ui = state.as_ref().map(|s| s.ui.clone()).unwrap_or(default_ui);
     view! {
         <div class="flex-1 overflow-auto text-[#888] p-4">
             <h1 class="text-lg font-medium text-[#ccc] mb-2">"Settings"</h1>
@@ -385,8 +411,8 @@ fn PositionsPanel(
 
 #[component]
 pub fn App() -> impl IntoView {
-    let (page, set_page) = signal::<Page>("log");
-    let (state, set_state) = signal::<Option<BotState>>(None);
+    let (page, set_page) = create_signal::<Page>("log");
+    let (state, set_state) = create_signal::<Option<BotState>>(None);
 
     create_effect(move |_| {
         spawn_local(async move {
@@ -441,7 +467,7 @@ pub fn App() -> impl IntoView {
             nav=view! {
                 <Sidebar
                     current=page.get()
-                    on_navigate=move |p| set_page.set(p)
+                    on_navigate=Callback::new(move |p: &'static str| set_page.set(p))
                 />
             }
             header=view! {

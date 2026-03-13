@@ -1,100 +1,85 @@
-# Polymarket Politics Markets Bot (Rust)
+## PolyMarket Copy-trading bot (backend + Leptos UI)
 
-Automated **Rust** bot that trades Polymarket **politics** (and other keyword-based) binary markets via the CLOB REST API.
+Rust clone of the [Polymarket copy-trading bot](https://github.com/dev-protocol/polymarket-copytrading-bot-sport): follow one or more leader addresses, copy their trades with a size multiplier, optional take-profit/stop-loss/trailing exit, and a **Leptos** web UI for logs, dashboard, settings, and live positions.
 
-It:
+### Prerequisites
 
-- Connects with your Polymarket wallet (EOA + Gnosis Safe proxy)
-- Finds active **binary** markets whose event title or question matches your keywords (e.g. politics, election, vote, government)
-- Places **one BUY per outcome (first = “Up”, second = “Down”)** per market when price conditions are met
-- Tracks fills and places a **SELL** when price ≥ sell target, or **stop-loss** when price ≤ 67% of target
-- Sells at current bid when it’s ≥ sell price; otherwise places limit at sell price
-- Emergency exit near market close to avoid holding into resolution
+- **Rust** 1.70+
+- **Trunk** (for building the Leptos frontend): `cargo install trunk`
+- **wasm32 target**: `rustup target add wasm32-unknown-unknown`
+- Polymarket account (USDC on Polygon) and CLOB API credentials in `config.json`
 
-## Prerequisites
+### Config
 
-- **Rust** 1.70+ (`rustup` recommended)
-- A Polymarket account funded with **USDC on Polygon** and enabled for trading
+- **config.json** – Same as other bots: `clob_api_url`, `private_key`, `api_key`, `api_secret`, `api_passphrase`, optional `proxy_wallet_address`, `signature_type`.
+- **trade.toml** – Copy-trading config (same shape as the TypeScript project):
 
-## Build
+```toml
+clob_host = "https://clob.polymarket.com"
+chain_id = 137
+port = 8000
+simulation = false
+
+[copy]
+target_address = ["0x1979ae6B7E6534dE9c4539D0c205E582cA637C9D"]
+revert_trade = false
+size_multiplier = 0.01
+poll_interval_sec = 10
+
+[exit]
+take_profit = 0
+stop_loss = 0
+trailing_stop = 0
+
+[filter]
+buy_amount_limit_in_usd = 0
+entry_trade_sec = 0
+trade_sec_from_resolve = 0
+
+[ui]
+delta_highlight_sec = 10
+delta_animation_sec = 2
+```
+
+### Build and run
+
+**1. Backend (copy-trading + API server)**
 
 ```bash
-cd polymarket-politics-markets-trading-bot-rust
-cargo build --release
+cargo build --release --bin main_copytrading
+# Or run directly:
+cargo run --release --bin main_copytrading -- -c config.json -t trade.toml
 ```
 
-## Configure
-
-Copy the env template and set your credentials:
+**2. Leptos frontend (optional; for the dashboard UI)**
 
 ```bash
-cp env.template .env
-# Edit .env with your PRIVATE_KEY and optional FUNDER_ADDRESS
+cd frontend
+trunk build --release
+cd ..
 ```
 
-Example `.env`:
+This writes the UI into `frontend/dist/`. The backend serves it at `http://localhost:8000` (or the `port` in `trade.toml`). If `frontend/dist` is missing, the server still runs and `/api/state` works; only the static UI will 404 until you build the frontend.
 
-```env
-PRIVATE_KEY=0x...         # EOA private key that controls your Polymarket account
-CLOB_HOST=https://clob.polymarket.com
-CHAIN_ID=137
-GAMMA_HOST=https://gamma-api.polymarket.com
-
-# Keywords to match event/market title or question (comma-separated; default: politics,election,vote,government,congress,senate)
-POLITICS_KEYWORDS=politics,election,vote,government,congress,senate
-
-TARGET_PRICE_UP=0.45
-SELL_PRICE_UP=0.55
-TARGET_PRICE_DOWN=0.45
-SELL_PRICE_DOWN=0.55
-ORDER_AMOUNT_TOKEN=5
-CHECK_INTERVAL=10000
-SELL_DELAY_MS=10000
-
-TRADING_MODE=continuous
-# TRADING_MODE=once
-
-# Optional: Gnosis Safe proxy (funder) for signatureType=2
-FUNDER_ADDRESS=0xYourSafeProxyAddress
-# Optional: log file
-# LOG_FILE=logs/trading.log
-```
-
-- **PRIVATE_KEY**: EOA you use with Polymarket (e.g. MetaMask).
-- **FUNDER_ADDRESS**: Your Polymarket Safe proxy address (recommended for CLOB `signatureType=2`). Omit to use the EOA as funder.
-- **POLITICS_KEYWORDS**: At least one keyword; events/markets whose title or question contains any of these (case-insensitive) are considered. Examples: `politics`, `election`, `vote`, `government`, `congress`, `senate`.
-- **ORDER_AMOUNT_TOKEN**: Shares per side; minimum 5. USD per side ≈ `ORDER_AMOUNT_TOKEN × TARGET_PRICE_*`.
-- **Stop loss**: Fixed at **67% of the buy (target) price** for both outcomes.
-
-## Run
+**3. Run copy-trading + UI**
 
 ```bash
-cargo run --release
-# or
-./target/release/polymarket-bot
+# After building the frontend once:
+cargo run --release --bin main_copytrading
+# Open http://localhost:8000
 ```
 
-Stop with `Ctrl+C`.
+- **Simulation (no real orders):** `cargo run --release --bin main_copytrading -- --simulation`
+- **Custom UI dir:** `--ui-dir /path/to/dist`
 
-## Behavior
+### Project layout (copy-trading)
 
-- **One market at a time**: Only the **next** eligible market (by start date) matching your keywords is traded per iteration.
-- **Binary only**: Only markets with exactly two outcomes (e.g. Yes/No) are traded; first token = “Up”, second = “Down” for pricing/stop-loss.
-- **One BUY per outcome per market**: At most one buy per side per market; no re-buy after sell.
-- **Sell when**:
-  - Price ≥ configured sell price (take-profit), or
-  - Price ≤ stop-loss (67% of target).
-- **Emergency exit**: When close to market end, resting SELLs are cancelled and an aggressive exit is placed so you don’t hold into resolution.
+- `src/bin/main_copytrading.rs` – Entry point: load config, spawn HTTP server, poll leaders and copy trades.
+- `src/copy_trading.rs` – Config (trade.toml), filters, copy_trade, exit loop, position diff.
+- `src/web_state.rs` – Shared state for the UI (logs, status, positions); served as JSON at `/api/state`.
+- `frontend/` – Leptos (CSR) UI: Dashboard, Log, Settings, Live positions; fetches `/api/state` every 3s.
 
-## Project layout
-
-- `src/main.rs` – Entry point, config load, bot run.
-- `src/config.rs` – Env-based configuration and validation.
-- `src/types.rs` – Market, order, and outcome types.
-- `src/logger.rs` – Console and optional file / per-market logging.
-- `src/gamma.rs` – Gamma API client for politics (keyword-based) market discovery.
-- `src/clob.rs` – CLOB client: EIP-712 auth (derive API key), HMAC L2, limit orders, balance, open orders, cancel.
-- `src/bot.rs` – Main loop: discovery, enter market, fill detection, SELL placement, stop-loss, emergency exit.
+---
 
 ## References
 
