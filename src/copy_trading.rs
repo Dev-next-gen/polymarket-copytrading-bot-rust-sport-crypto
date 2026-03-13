@@ -3,9 +3,9 @@
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use rust_decimal::prelude::{FromStr, ToPrimitive};
+use rust_decimal::prelude::{ToPrimitive};
 use rust_decimal::Decimal;
-use std::str::FromStr as _;
+use std::str::FromStr;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
