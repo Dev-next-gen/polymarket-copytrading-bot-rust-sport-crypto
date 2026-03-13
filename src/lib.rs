@@ -1,8 +1,9 @@
 pub mod api;
 pub mod clob_sdk;
 pub mod backtest;
-pub mod detector;
 pub mod config;
+pub mod copy_trading;
+pub mod detector;
 pub mod merge;
 pub mod models;
 pub mod monitor;

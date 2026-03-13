@@ -47,6 +47,18 @@ sol! {
 
 type HmacSha256 = Hmac<Sha256>;
 
+/// Position row from Data API (positions?user=...). Used by copy-trading to diff and detect leader trades.
+#[derive(Debug, Clone)]
+pub struct DataApiPosition {
+    pub asset: String,
+    pub size: f64,
+    pub cur_price: f64,
+    pub condition_id: Option<String>,
+    pub end_date: Option<String>,
+    pub slug: Option<String>,
+    pub outcome: Option<String>,
+}
+
 /// Polygon chain ID from clob_sdk (137).
 fn polygon() -> u64 {
     clob_sdk::polygon()
@@ -1529,6 +1541,66 @@ impl PolymarketApi {
         let signer = LocalSigner::from_str(pk)
             .context("Invalid private_key")?;
         Ok(format!("{}", signer.address()))
+    }
+
+    /// Fetch all positions for a user from Data API (paginated). Used by copy-trading polling.
+    /// Filters: size > 0, cur_price > 0 and != 1, end_date not in the past.
+    pub async fn get_positions(&self, user: &str) -> Result<Vec<DataApiPosition>> {
+        const PAGE_SIZE: u32 = 500;
+        const MAX_OFFSET: u32 = 10_000;
+        let user = if user.starts_with("0x") { user.to_string() } else { format!("0x{}", user) };
+        let mut all = Vec::new();
+        let mut offset = 0u32;
+        while offset <= MAX_OFFSET {
+            let response = self.client
+                .get("https://data-api.polymarket.com/positions")
+                .query(&[("user", user.as_str()), ("limit", &PAGE_SIZE.to_string()), ("offset", &offset.to_string())])
+                .send()
+                .await
+                .context("Failed to fetch positions")?;
+            if !response.status().is_success() {
+                anyhow::bail!("Data API positions returned {}", response.status());
+            }
+            let page: Vec<Value> = response.json().await.unwrap_or_default();
+            for p in page {
+                let size = p.get("size")
+                    .and_then(|v| v.as_f64())
+                    .or_else(|| p.get("size").and_then(|v| v.as_u64().map(|u| u as f64)))
+                    .or_else(|| p.get("size").and_then(|v| v.as_str()).and_then(|s| s.parse::<f64>().ok()));
+                let size = match size { Some(s) => s, None => continue };
+                let cur_price = p.get("curPrice")
+                    .or(p.get("cur_price"))
+                    .and_then(|v| v.as_f64().or_else(|| v.as_u64().map(|u| u as f64)).or_else(|| v.as_str().and_then(|s| s.parse::<f64>().ok())))
+                    .unwrap_or(0.0);
+                if size <= 0.0 || cur_price <= 0.0 || (cur_price - 1.0).abs() < 1e-9 {
+                    continue;
+                }
+                let asset = match p.get("asset").and_then(|a| a.as_str()) {
+                    Some(a) => a.to_string(),
+                    None => continue,
+                };
+                let end_date = p.get("endDate").or(p.get("end_date")).and_then(|v| v.as_str()).map(String::from);
+                if let Some(ref ed) = end_date {
+                    if chrono::DateTime::parse_from_rfc3339(ed).map(|t| t.timestamp() < chrono::Utc::now().timestamp()).unwrap_or(false) {
+                        continue;
+                    }
+                }
+                all.push(DataApiPosition {
+                    asset,
+                    size,
+                    cur_price,
+                    condition_id: p.get("conditionId").or(p.get("condition_id")).and_then(|c| c.as_str()).map(String::from),
+                    end_date,
+                    slug: p.get("slug").and_then(|s| s.as_str()).map(String::from),
+                    outcome: p.get("outcome").and_then(|o| o.as_str()).map(String::from),
+                });
+            }
+            if page.len() < PAGE_SIZE as usize {
+                break;
+            }
+            offset += PAGE_SIZE;
+        }
+        Ok(all)
     }
 
     /// Fetch redeemable position condition IDs from Data API (user=wallet, redeemable=true).

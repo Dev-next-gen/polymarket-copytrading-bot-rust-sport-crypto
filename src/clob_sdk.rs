@@ -1,8 +1,3 @@
-//! Load the private CLOB SDK from a shared library (.so / .dylib / .dll).
-//! Set `LIBCOB_SDK_SO` to the path of the .so, or place it in `./lib/` or current dir.
-//! Build the SDK with: `cd polymarket-clob-sdk && cargo build --release --features clob`
-//! → `target/release/libclob_sdk.so` (Linux), `libclob_sdk.dylib` (macOS), `clob_sdk.dll` (Windows).
-
 use std::ffi::{c_char, c_int, CString};
 use std::os::raw::c_ulonglong;
 use std::str::FromStr;
@@ -31,8 +26,8 @@ fn load_lib() -> Result<&'static Library> {
         .or_else(|| {
             #[cfg(not(target_os = "windows"))]
             let candidates = [
-                "lib/libclob_sdk.so",
-                "src/lib/libclob_sdk.so",
+                "lib/lib.so",
+                "src/lib/lib.so",
             ];
             candidates
                 .into_iter()
@@ -40,7 +35,7 @@ fn load_lib() -> Result<&'static Library> {
                 .map(String::from)
         })
         .context(
-            "CLOB SDK .so not found. Set LIBCOB_SDK_SO to the path of libclob_sdk.so (or .dylib/.dll), \
+            "CLOB SDK .so not found. Set LIBCOB_SDK_SO to the path of lib.so (or .dylib/.dll), \
              or place it in ./lib/ or current directory, or run from the bot dir when the SDK is at \
              ../polymarket-clob-sdk. Build: cd polymarket-clob-sdk && cargo build --release --features clob",
         )?;
