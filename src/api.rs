@@ -1562,7 +1562,7 @@ impl PolymarketApi {
                 anyhow::bail!("Data API positions returned {}", response.status());
             }
             let page: Vec<Value> = response.json().await.unwrap_or_default();
-            for p in page {
+            for p in &page {
                 let size = p.get("size")
                     .and_then(|v| v.as_f64())
                     .or_else(|| p.get("size").and_then(|v| v.as_u64().map(|u| u as f64)))

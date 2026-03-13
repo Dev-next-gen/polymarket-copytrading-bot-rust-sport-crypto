@@ -224,7 +224,7 @@ pub async fn copy_trade(
 // ---------- Entry tracking (for exit loop) ----------
 
 #[derive(Debug, Clone)]
-pub(crate) struct Entry {
+pub struct Entry {
     entry_price: Decimal,
     size: Decimal,
     max_price: Decimal,
@@ -260,7 +260,7 @@ pub fn record_entry(
 // ---------- Position snapshot (for diff) ----------
 
 #[derive(Debug, Clone, Default)]
-pub(crate) struct PositionSnapshot {
+pub struct PositionSnapshot {
     size: f64,
     cur_price: f64,
     condition_id: Option<String>,

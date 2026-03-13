@@ -10,10 +10,10 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use polymarket_trading_bot::api::PolymarketApi;
-use polymarket_trading_bot::config::{Args, Config};
+use polymarket_trading_bot::config::Config;
 use polymarket_trading_bot::copy_trading::{
     build_snapshot_map, copy_trade, diff_to_trades, record_entry, should_copy_trade, spawn_exit_loop,
-    CopyTradingConfig, LeaderTrade, SnapshotMap,
+    CopyTradingConfig, SnapshotMap,
 };
 
 #[derive(Parser, Debug)]
@@ -152,12 +152,10 @@ async fn main() -> Result<()> {
                 .await
                 {
                     Ok(Some((size, price))) => {
-                        record_entry(
-                            &mut entries.lock().await,
-                            &trade.asset_id,
-                            size,
-                            price,
-                        );
+                        {
+                            let mut ent = entries.lock().await;
+                            record_entry(&mut *ent, &trade.asset_id, size, price);
+                        }
                         info!(
                             "LIVE | {} {} {} size {} @ {} | from {} | ok",
                             trade.side,
