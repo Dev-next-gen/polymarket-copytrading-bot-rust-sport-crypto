@@ -73,14 +73,27 @@ async fn main() -> Result<()> {
 
     let args = CopyArgs::parse();
     let config = Config::load(&args.config)?;
-    let copy_config = CopyTradingConfig::load(&args.trade_config)
-        .context("Load trade.toml (copy targets, filters, exit)")?;
+
+    let trade_path = if args.trade_config.is_absolute() {
+        args.trade_config.clone()
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(&args.trade_config)
+    };
+    let copy_config = CopyTradingConfig::load(&trade_path).with_context(|| {
+        format!(
+            "Load trade.toml (copy targets, filters, exit). Tried: {} (cwd: {})",
+            trade_path.display(),
+            std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")).display()
+        )
+    })?;
 
     let targets = copy_config.target_addresses();
     if targets.is_empty() {
         anyhow::bail!(
             "No copy targets. Set copy.target_address or copy.target_addresses in {}",
-            args.trade_config.display()
+            trade_path.display()
         );
     }
 
