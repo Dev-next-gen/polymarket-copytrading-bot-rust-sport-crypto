@@ -1,1 +1,1 @@
-# The Fastest PolyMarket CopyTrading Bot in Rust
+# The Fastest Polymarket Copy Trading Bot in Rust for all markets
