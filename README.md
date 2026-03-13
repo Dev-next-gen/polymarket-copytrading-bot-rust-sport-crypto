@@ -9,6 +9,38 @@ Rust clone of the [Polymarket copy-trading bot](https://github.com/dev-protocol/
 - **wasm32 target**: `rustup target add wasm32-unknown-unknown`
 - Polymarket account (USDC on Polygon) and CLOB API credentials in `config.json`
 
+### Install
+
+1. **Clone the repo**
+
+   ```bash
+   git clone https://github.com/frogansol/fastest-polymarket-copytrading-bot-sport-crypto.git
+   cd fastest-polymarket-copytrading-bot-sport-crypto
+   ```
+
+2. **Install Rust** (if needed): [rustup.rs](https://rustup.rs)
+
+   ```bash
+   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+   ```
+
+3. **Install Trunk and wasm target** (for the Leptos UI)
+
+   ```bash
+   cargo install trunk
+   rustup target add wasm32-unknown-unknown
+   ```
+
+4. **Add config files** in the project root: `config.json` (CLOB API keys and wallet) and `trade.toml` (copy-trading options). See [Config](#config) for the format.
+
+5. **(Optional) Build the frontend**
+
+   ```bash
+   cd frontend && trunk build --release && cd ..
+   ```
+
+Then run the bot: see [Build and run](#build-and-run).
+
 ### Config
 
 - **config.json** – Same as other bots: `clob_api_url`, `private_key`, `api_key`, `api_secret`, `api_passphrase`, optional `proxy_wallet_address`, `signature_type`.
