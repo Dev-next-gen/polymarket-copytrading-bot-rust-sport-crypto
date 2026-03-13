@@ -1,0 +1,15 @@
+[build]
+target = "index.html"
+release = false
+dist = "dist"
+public_url = "/"
+inject_scripts = true
+
+[watch]
+watch = []
+ignore = []
+
+[serve]
+addresses = ["127.0.0.1"]
+port = 3000
+open = false
