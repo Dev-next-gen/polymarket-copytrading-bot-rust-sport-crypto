@@ -1,13 +1,16 @@
 //! Copy-trading backend: follow leader addresses from trade.toml.
 //! Config: config.json (polymarket credentials + API keys), trade.toml (targets, filters, exit).
+//! Serves UI at port (trade.toml) and /api/state for the Leptos frontend.
 
 use anyhow::{Context, Result};
+use axum::{extract::State, routing::get, Json, Router};
 use clap::Parser;
 use log::info;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use tower_http::services::ServeDir;
 
 use polymarket_trading_bot::api::PolymarketApi;
 use polymarket_trading_bot::config::Config;
@@ -15,6 +18,7 @@ use polymarket_trading_bot::copy_trading::{
     build_snapshot_map, copy_trade, diff_to_trades, record_entry, should_copy_trade, spawn_exit_loop,
     CopyTradingConfig, SnapshotMap,
 };
+use polymarket_trading_bot::web_state::{self, BotState, SharedState};
 
 #[derive(Parser, Debug)]
 #[command(name = "main_copytrading")]
@@ -31,6 +35,34 @@ pub struct CopyArgs {
     /// Run in simulation (no real orders)
     #[arg(long)]
     pub simulation: bool,
+
+    /// Directory to serve UI from (default: frontend/dist). Build with: cd frontend && trunk build
+    #[arg(long, default_value = "frontend/dist")]
+    pub ui_dir: PathBuf,
+}
+
+#[derive(Clone)]
+struct AppState {
+    web: SharedState,
+    ui_dir: PathBuf,
+}
+
+async fn api_state(State(app): State<AppState>) -> Json<BotState> {
+    Json(web_state::get_state(app.web).await)
+}
+
+fn spawn_web_server(state: SharedState, port: u16, ui_dir: PathBuf) {
+    tokio::spawn(async move {
+        let app_state = AppState { web: state, ui_dir: ui_dir.clone() };
+        let serve_dir = ServeDir::new(&ui_dir);
+        let app = Router::new()
+            .route("/api/state", get(api_state))
+            .with_state(app_state)
+            .fallback_service(serve_dir);
+        let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
+        let listener = tokio::net::TcpListener::bind(addr).await.expect("bind");
+        axum::serve(listener, app).await.expect("serve");
+    });
 }
 
 #[tokio::main]
@@ -85,6 +117,25 @@ async fn main() -> Result<()> {
         }
     );
 
+    let web_state = web_state::new_shared_state();
+    web_state::set_status(
+        web_state.clone(),
+        if simulation { "Sim".to_string() } else { "Live".to_string() },
+        targets.len() as u32,
+        Some(wallet.clone()),
+        Some(targets.clone()),
+    )
+    .await;
+    web_state::set_ui_config(
+        web_state.clone(),
+        copy_config.ui.delta_highlight_sec,
+        copy_config.ui.delta_animation_sec,
+    )
+    .await;
+    let port = copy_config.port;
+    spawn_web_server(web_state.clone(), port, args.ui_dir);
+    info!("UI http://localhost:{}", port);
+
     let entries: Arc<Mutex<HashMap<String, polymarket_trading_bot::copy_trading::Entry>>> =
         Arc::new(Mutex::new(HashMap::new()));
     if !simulation
@@ -117,6 +168,19 @@ async fn main() -> Result<()> {
                 }
             };
             let curr = build_snapshot_map(&positions);
+            let pos_list: Vec<_> = positions
+                .iter()
+                .map(|p| {
+                    (
+                        p.slug.clone().unwrap_or_else(|| "?".to_string()),
+                        p.outcome.clone().unwrap_or_else(|| "?".to_string()),
+                        p.size,
+                        p.cur_price,
+                    )
+                })
+                .collect();
+            web_state::set_positions(web_state.clone(), user_lower.clone(), pos_list).await;
+
             let prev_map = prev.get(&user_lower);
             if prev_map.is_none() {
                 info!("INIT | {} | {} position(s)", user_lower, curr.len());
@@ -141,6 +205,18 @@ async fn main() -> Result<()> {
                         user_lower,
                         "skipped"
                     );
+                    web_state::push_trade(
+                        web_state.clone(),
+                        "SIM".to_string(),
+                        trade.side.clone(),
+                        outcome.to_string(),
+                        trade.size.clone(),
+                        trade.price.clone(),
+                        slug.to_string(),
+                        Some(user_lower.clone()),
+                        Some("skipped".to_string()),
+                    )
+                    .await;
                     continue;
                 }
                 match copy_trade(
@@ -165,6 +241,18 @@ async fn main() -> Result<()> {
                             trade.price,
                             user_lower
                         );
+                        web_state::push_trade(
+                            web_state.clone(),
+                            "LIVE".to_string(),
+                            trade.side.clone(),
+                            outcome.to_string(),
+                            trade.size.clone(),
+                            trade.price.clone(),
+                            slug.to_string(),
+                            Some(user_lower.clone()),
+                            Some("ok".to_string()),
+                        )
+                        .await;
                     }
                     Ok(None) => {
                         info!(
@@ -176,6 +264,18 @@ async fn main() -> Result<()> {
                             trade.price,
                             user_lower
                         );
+                        web_state::push_trade(
+                            web_state.clone(),
+                            "LIVE".to_string(),
+                            trade.side.clone(),
+                            outcome.to_string(),
+                            trade.size.clone(),
+                            trade.price.clone(),
+                            slug.to_string(),
+                            Some(user_lower.clone()),
+                            Some("ok".to_string()),
+                        )
+                        .await;
                     }
                     Err(e) => {
                         log::warn!(
@@ -185,6 +285,18 @@ async fn main() -> Result<()> {
                             user_lower,
                             e
                         );
+                        web_state::push_trade(
+                            web_state.clone(),
+                            "LIVE".to_string(),
+                            trade.side.clone(),
+                            outcome.to_string(),
+                            trade.size.clone(),
+                            trade.price.clone(),
+                            slug.to_string(),
+                            Some(user_lower.clone()),
+                            Some(format!("FAILED: {}", e)),
+                        )
+                        .await;
                     }
                 }
             }

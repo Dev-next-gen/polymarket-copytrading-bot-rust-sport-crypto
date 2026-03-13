@@ -32,6 +32,23 @@ pub struct CopyTradingConfig {
     pub filter: FilterSection,
     #[serde(default)]
     pub exit: ExitSection,
+    #[serde(default)]
+    pub ui: UiSection,
+}
+
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct UiSection {
+    #[serde(default = "default_delta_highlight")]
+    pub delta_highlight_sec: u64,
+    #[serde(default = "default_delta_animation")]
+    pub delta_animation_sec: u64,
+}
+fn default_delta_highlight() -> u64 {
+    10
+}
+fn default_delta_animation() -> u64 {
+    2
 }
 
 fn default_clob_host() -> String {

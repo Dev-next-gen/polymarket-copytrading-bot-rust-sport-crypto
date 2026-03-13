@@ -4,6 +4,7 @@ pub mod backtest;
 pub mod config;
 pub mod copy_trading;
 pub mod detector;
+pub mod web_state;
 pub mod merge;
 pub mod models;
 pub mod monitor;
