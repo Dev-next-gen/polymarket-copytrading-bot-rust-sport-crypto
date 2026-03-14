@@ -9,6 +9,7 @@ pub mod merge;
 pub mod models;
 pub mod monitor;
 pub mod rtds;
+pub mod activity_stream;
 pub mod simulation;
 pub mod trader;
 

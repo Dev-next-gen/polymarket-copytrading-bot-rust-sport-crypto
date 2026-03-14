@@ -23,13 +23,14 @@ use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex};
 use tower_http::services::ServeDir;
 
+use polymarket_trading_bot::activity_stream;
 use polymarket_trading_bot::api::PolymarketApi;
 use polymarket_trading_bot::config::Config;
 use polymarket_trading_bot::copy_trading::{
     build_snapshot_map, copy_trade, diff_to_trades, record_entry, should_copy_trade, spawn_exit_loop,
     CopyTradingConfig, SnapshotMap,
 };
-use polymarket_trading_bot::web_state::{self, BotState, SharedState};
+use polymarket_trading_bot::web_state::{self, SharedState};
 
 #[derive(Parser, Debug)]
 #[command(name = "main_copytrading")]
@@ -255,15 +256,86 @@ async fn main() -> Result<()> {
         info!("Exit loop started (take_profit/stop_loss/trailing_stop)");
     }
 
-    let poll_interval = std::time::Duration::from_secs(
-        copy_config.copy.poll_interval_sec.max(5),
-    );
+    let poll_secs = copy_config.copy.poll_interval_sec.clamp(0.25, 3600.0);
+    let poll_interval = std::time::Duration::from_secs_f64(poll_secs);
+
+    if targets.len() == 1 {
+        // Single target: instant updates via Polymarket activity WebSocket (like the TS project).
+        let target = targets[0].clone();
+        activity_stream::spawn_activity_stream(
+            target.clone(),
+            api.clone(),
+            copy_config.clone(),
+            web_state.clone(),
+            notify_tx.clone(),
+            entries.clone(),
+            simulation,
+        );
+        // Positions UI poll only (no trade copy from positions).
+        let mut initial_load_done = false;
+        loop {
+            let user_lower = target.to_lowercase();
+            match api.get_positions(&user_lower).await {
+                Ok(positions) => {
+                    let pos_list: Vec<_> = positions
+                        .iter()
+                        .map(|p| {
+                            (
+                                p.slug.clone().unwrap_or_else(|| "?".to_string()),
+                                p.outcome.clone().unwrap_or_else(|| "?".to_string()),
+                                p.size,
+                                p.cur_price,
+                            )
+                        })
+                        .collect();
+                    web_state::set_positions(web_state.clone(), user_lower.clone(), pos_list).await;
+                    if !initial_load_done {
+                        info!("INIT | {} | {} position(s)", user_lower, positions.len());
+                        for p in &positions {
+                            let slug = p.slug.as_deref().unwrap_or("?");
+                            let outcome = p.outcome.as_deref().unwrap_or("?");
+                            web_state::push_trade(
+                                web_state.clone(),
+                                "POS".to_string(),
+                                "—".to_string(),
+                                outcome.to_string(),
+                                format!("{:.2}", p.size),
+                                format!("{:.3}", p.cur_price),
+                                slug.to_string(),
+                                Some(user_lower.clone()),
+                                Some("loaded".to_string()),
+                            )
+                            .await;
+                            let _ = notify_tx.send(());
+                        }
+                        initial_load_done = true;
+                    }
+                }
+                Err(e) => log::warn!("get_positions {}: {}", user_lower, e),
+            }
+            tokio::time::sleep(poll_interval).await;
+        }
+    }
+
+    info!("Polling targets every {:.2}s (parallel fetch)", poll_secs);
     let mut prev: HashMap<String, SnapshotMap> = HashMap::new();
 
     loop {
-        for user in &targets {
-            let user_lower = user.to_lowercase();
-            let positions = match api.get_positions(&user_lower).await {
+        let fetch_futures: Vec<_> = targets
+            .iter()
+            .map(|user| {
+                let user_lower = user.to_lowercase();
+                let api = api.clone();
+                async move {
+                    let res = api.get_positions(&user_lower).await;
+                    (user_lower, res)
+                }
+            })
+            .collect();
+        let results = futures_util::future::join_all(fetch_futures).await;
+
+        for (user_lower, positions_result) in results {
+            let positions = match positions_result {
                 Ok(p) => p,
                 Err(e) => {
                     log::warn!("get_positions {}: {}", user_lower, e);

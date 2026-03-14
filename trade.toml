@@ -12,12 +12,12 @@ simulation = true
 [copy]
 # Leader address(es) to copy
 target_address = [
-    "0x1979ae6B7E6534dE9c4539D0c205E582cA637C9D",
     "0x204f72f35326db932158cba6adff0b9a1da95e14"
 ]
 revert_trade = false
 size_multiplier = 0.01
-poll_interval_sec = 10
+# How often to check targets' positions (seconds). Can use decimals, e.g. 0.5 = twice per second.
+poll_interval_sec = 0.5
 
 [exit]
 take_profit = 0

@@ -98,8 +98,10 @@ fn Sidebar() -> impl IntoView {
             <A
                 href="/"
                 class=move || {
-                    if path() == "/" { "px-3 py-2 text-left text-sm border-l-[3px] border-[#8af] bg-[#222] text-[#8af] block" }
-                    else { "px-3 py-2 text-left text-sm border-l-[3px] border-transparent text-[#888] hover:text-[#ccc] block" }
+                    let binding = path();
+                    let p = binding.trim_end_matches('/');
+                    if p.is_empty() || p == "/" { "sidebar-link active" }
+                    else { "sidebar-link" }
                 }
             >
                 "Dashboard"
@@ -107,8 +109,9 @@ fn Sidebar() -> impl IntoView {
             <A
                 href="/logs"
                 class=move || {
-                    if path() == "/logs" { "px-3 py-2 text-left text-sm border-l-[3px] border-[#8af] bg-[#222] text-[#8af] block" }
-                    else { "px-3 py-2 text-left text-sm border-l-[3px] border-transparent text-[#888] hover:text-[#ccc] block" }
+                    let binding = path();
+                    if binding.trim_end_matches('/') == "/logs" { "sidebar-link active" }
+                    else { "sidebar-link" }
                 }
             >
                 "Log"
@@ -116,8 +119,9 @@ fn Sidebar() -> impl IntoView {
             <A
                 href="/settings"
                 class=move || {
-                    if path() == "/settings" { "px-3 py-2 text-left text-sm border-l-[3px] border-[#8af] bg-[#222] text-[#8af] block" }
-                    else { "px-3 py-2 text-left text-sm border-l-[3px] border-transparent text-[#888] hover:text-[#ccc] block" }
+                    let binding = path();
+                    if binding.trim_end_matches('/') == "/settings" { "sidebar-link active" }
+                    else { "sidebar-link" }
                 }
             >
                 "Settings"
@@ -176,10 +180,12 @@ fn LogPage(
                             } else {
                                 r.time.clone()
                             };
-                            let side_class = match r.side.as_str() {
-                                "BUY" => "text-[#6f6] font-semibold",
-                                "SELL" => "text-[#f66] font-semibold",
-                                _ => "",
+                            let side_class = if r.side.eq_ignore_ascii_case("BUY") {
+                                "side-buy"
+                            } else if r.side.eq_ignore_ascii_case("SELL") {
+                                "side-sell"
+                            } else {
+                                ""
                             };
                             let r_time = r.time.clone();
                             let r_tag = r.tag.clone();
@@ -194,7 +200,7 @@ fn LogPage(
                                 <tr key=format!("{:?}-{}", r_time, i) class="border-b border-[#333]">
                                     <td class="p-2">{time_short}</td>
                                     <td class="p-2">{r_tag}</td>
-                                    <td class=format!("p-2 font-medium {}", side_class)>{r_side}</td>
+                                    <td class=format!("p-2 {}", side_class)>{r_side}</td>
                                     <td class="p-2">{r_outcome}</td>
                                     <td class="p-2 tabular-nums">
                                         {if let Ok(n) = r_size.parse::<f64>() {

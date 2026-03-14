@@ -1,6 +1,10 @@
-## PolyMarket Copy-trading bot (backend + Leptos UI)
+# PolyMarket Copy-trading bot (backend + Leptos UI)
 
 Follow one or more leader addresses, copy their trades with a size multiplier, optional take-profit/stop-loss/trailing exit, and a **Leptos** web UI for logs, dashboard, settings, and live positions.
+
+##
+
+
 
 ### Prerequisites
 
@@ -56,7 +60,7 @@ simulation = false
 target_address = ["0x1979ae6B7E6534dE9c4539D0c205E582cA637C9D"]
 revert_trade = false
 size_multiplier = 0.01
-poll_interval_sec = 10
+poll_interval_sec = 0.5   # seconds (can use decimals). Single target: instant trades via WebSocket; multiple: parallel position polling.
 
 [exit]
 take_profit = 0
@@ -72,6 +76,11 @@ trade_sec_from_resolve = 0
 delta_highlight_sec = 10
 delta_animation_sec = 2
 ```
+
+### Single target vs multiple targets
+
+- **One target** in `target_address` / `target_addresses`: the bot uses Polymarket’s **activity WebSocket** (`wss://ws-live-data.polymarket.com`), same as the TypeScript copytrading bot. Trades are pushed in real time for instant copy and UI updates.
+- **Multiple targets**: the bot uses **parallel position polling** (REST API) every `poll_interval_sec`; no WebSocket for multiple addresses.
 
 ### Build and run
 

@@ -72,7 +72,7 @@ pub struct CopySection {
     #[serde(default = "default_multiplier")]
     pub size_multiplier: f64,
     #[serde(default = "default_poll_interval")]
-    pub poll_interval_sec: u64,
+    pub poll_interval_sec: f64,
 }
 
 fn default_true() -> bool {
@@ -81,8 +81,8 @@ fn default_true() -> bool {
 fn default_multiplier() -> f64 {
     1.0
 }
-fn default_poll_interval() -> u64 {
-    30
+fn default_poll_interval() -> f64 {
+    5.0
 }
 
 #[derive(Debug, Clone, Default, serde::Deserialize)]

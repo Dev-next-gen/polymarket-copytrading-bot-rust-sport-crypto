@@ -104,5 +104,24 @@ body { margin: 0; font-family: system-ui, sans-serif; background: #111; color: #
 .hidden { display: none !important; }
 .min-w-\[3\.5em\] { min-width: 3.5em; }
 
-/* Sidebar link - ensure clickable and visible */
+/* Sidebar links and active state */
 nav a { text-decoration: none; color: inherit; }
+.sidebar-link {
+  display: block;
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  font-size: 0.875rem;
+  border-left: 3px solid transparent;
+  color: #888;
+}
+.sidebar-link:hover { color: #ccc; }
+.sidebar-link.active {
+  border-left-color: #88aaff;
+  background: #222;
+  color: #88aaff;
+  font-weight: 600;
+}
+
+/* Log table: BUY = green, SELL = red */
+.side-buy { color: #3a3; font-weight: 600; }
+.side-sell { color: #e55; font-weight: 600; }
