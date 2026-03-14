@@ -1,6 +1,6 @@
 ## PolyMarket Copy-trading bot (backend + Leptos UI)
 
-Rust clone of the [Polymarket copy-trading bot](https://github.com/dev-protocol/polymarket-copytrading-bot-sport): follow one or more leader addresses, copy their trades with a size multiplier, optional take-profit/stop-loss/trailing exit, and a **Leptos** web UI for logs, dashboard, settings, and live positions.
+Follow one or more leader addresses, copy their trades with a size multiplier, optional take-profit/stop-loss/trailing exit, and a **Leptos** web UI for logs, dashboard, settings, and live positions.
 
 ### Prerequisites
 
@@ -103,6 +103,25 @@ cargo run --release --bin main_copytrading
 
 - **Simulation (no real orders):** `cargo run --release --bin main_copytrading -- --simulation`
 - **Custom UI dir:** `--ui-dir /path/to/dist`
+
+**4. Recommended: single server (no Trunk serve)**
+
+After building the frontend once, run **only** the backend. It serves both the API and the UI. Open the URL it prints (e.g. **http://localhost:8000** or **http://\<server-ip\>:8000** from another device). This avoids the "Loading Copy Bot..." issue that can happen with `trunk serve` when the browser is not on the same machine.
+
+**5. Dev mode (optional, live frontend)**
+
+Only if you need hot-reload while editing the frontend:
+
+```bash
+# Terminal 1 – backend
+cargo run --release --bin main_copytrading
+
+# Terminal 2 – frontend dev server
+cd frontend && trunk serve
+# Open http://localhost:3000 (same machine only; for remote use open :8000 instead)
+```
+
+If the UI at :3000 stays on "Loading Copy Bot...", use the single-server flow above and open **http://localhost:8000** (or **http://\<server-ip\>:8000**).
 
 ### Project layout (copy-trading)
 

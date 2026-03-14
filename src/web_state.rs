@@ -5,7 +5,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-const MAX_LOGS: usize = 100;
+/// Keep only recent activity so the UI stays real-time; trim older entries.
+const MAX_LOGS: usize = 50;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct TradeLog {

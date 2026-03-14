@@ -3062,6 +3062,7 @@ dependencies = [
  "alloy",
  "alloy-contract",
  "anyhow",
+ "async-stream",
  "axum",
  "base64 0.21.7",
  "chrono",

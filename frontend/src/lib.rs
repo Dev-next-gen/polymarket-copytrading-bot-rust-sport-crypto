@@ -1,6 +1,7 @@
 //! Leptos UI for Polymarket copy-trading bot. Fetches /api/state and displays logs, dashboard, settings, positions.
 
 use leptos::*;
+use leptos_router::*;
 use serde::Deserialize;
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -49,7 +50,8 @@ pub struct BotState {
 }
 
 async fn fetch_state() -> Result<BotState, String> {
-    gloo_net::http::Request::get("/api/state")
+    let url = format!("/api/state?t={}", js_sys::Date::now() as u64);
+    gloo_net::http::Request::get(&url)
         .send()
         .await
         .map_err(|e| e.to_string())?
@@ -84,46 +86,68 @@ fn Layout(
     }
 }
 
-type Page = &'static str;
-const PAGES: &[(Page, &str)] = &[("dashboard", "Dashboard"), ("log", "Log"), ("setting", "Settings")];
-
 #[component]
-fn Sidebar(current: Page, on_navigate: Callback<&'static str>) -> impl IntoView {
+fn Sidebar() -> impl IntoView {
+    let location = use_location();
+    let path = move || location.pathname.get();
     view! {
         <div class="flex flex-col py-2">
-            {PAGES
-                .iter()
-                .map(|(id, label)| {
-                    let is_current = *id == current;
-                    let id = *id;
-                    view! {
-                        <button
-                            type="button"
-                            on:click=move |_| on_navigate.call(id)
-                            class=if is_current {
-                                "px-3 py-2 text-left text-sm border-l-[3px] border-[#8af] bg-[#222] text-[#8af]"
-                            } else {
-                                "px-3 py-2 text-left text-sm border-l-[3px] border-transparent text-[#888] hover:text-[#ccc]"
-                            }
-                        >
-                            {*label}
-                        </button>
-                    }
-                })
-                .collect_view()}
+            <A
+                href="/"
+                class=move || {
+                    if path() == "/" { "px-3 py-2 text-left text-sm border-l-[3px] border-[#8af] bg-[#222] text-[#8af] block" }
+                    else { "px-3 py-2 text-left text-sm border-l-[3px] border-transparent text-[#888] hover:text-[#ccc] block" }
+                }
+            >
+                "Dashboard"
+            </A>
+            <A
+                href="/logs"
+                class=move || {
+                    if path() == "/logs" { "px-3 py-2 text-left text-sm border-l-[3px] border-[#8af] bg-[#222] text-[#8af] block" }
+                    else { "px-3 py-2 text-left text-sm border-l-[3px] border-transparent text-[#888] hover:text-[#ccc] block" }
+                }
+            >
+                "Log"
+            </A>
+            <A
+                href="/settings"
+                class=move || {
+                    if path() == "/settings" { "px-3 py-2 text-left text-sm border-l-[3px] border-[#8af] bg-[#222] text-[#8af] block" }
+                    else { "px-3 py-2 text-left text-sm border-l-[3px] border-transparent text-[#888] hover:text-[#ccc] block" }
+                }
+            >
+                "Settings"
+            </A>
         </div>
     }
 }
 
 #[component]
-fn LogPage(logs: impl Fn() -> Vec<TradeLog> + 'static) -> impl IntoView {
+fn LogPage(
+    logs: impl Fn() -> Vec<TradeLog> + 'static,
+    selected_target: impl Fn() -> Option<String> + 'static,
+) -> impl IntoView {
     view! {
         {move || {
-            let rows: Vec<_> = logs().into_iter().rev().collect();
+            let all_logs = logs();
+            let filtered = match selected_target() {
+                None => all_logs,
+                Some(ref addr) => all_logs
+                    .into_iter()
+                    .filter(|r| {
+                        r.target_address
+                            .as_ref()
+                            .map(|a| a.eq_ignore_ascii_case(addr))
+                            .unwrap_or(false)
+                    })
+                    .collect(),
+            };
+            let rows: Vec<_> = filtered.into_iter().rev().collect();
             view! {
                 <div class="flex-1 overflow-auto overflow-x-auto min-h-0 flex flex-col">
                     <p class="text-[11px] text-[#666] mb-2 shrink-0">
-                        "Showing " {rows.len()} " log entries (newest first)."
+                        "Showing " {rows.len()} " buy/sell activities (newest first)."
                     </p>
                     <table class="w-full border-collapse text-xs">
                         <thead>
@@ -149,7 +173,11 @@ fn LogPage(logs: impl Fn() -> Vec<TradeLog> + 'static) -> impl IntoView {
                             } else {
                                 r.time.clone()
                             };
-                            let side_class = if r.side == "BUY" { "text-[#6f6]" } else { "text-[#f66]" };
+                            let side_class = match r.side.as_str() {
+                                "BUY" => "text-[#6f6] font-semibold",
+                                "SELL" => "text-[#f66] font-semibold",
+                                _ => "",
+                            };
                             let r_time = r.time.clone();
                             let r_tag = r.tag.clone();
                             let r_side = r.side.clone();
@@ -409,10 +437,27 @@ fn PositionsPanel(
     }
 }
 
+/// Value for "show all targets" in the log filter.
+const LOG_TARGET_ALL: &str = "";
+
 #[component]
 pub fn App() -> impl IntoView {
-    let (page, set_page) = create_signal::<Page>("log");
+    view! {
+        <Router>
+            <AppInner/>
+        </Router>
+    }
+}
+
+#[component]
+fn AppInner() -> impl IntoView {
     let (state, set_state) = create_signal::<Option<BotState>>(None);
+    let (selected_log_target, set_selected_log_target) = create_signal::<Option<String>>(None);
+    let location = use_location();
+    let path = move || {
+        let p = location.pathname.get();
+        if p.is_empty() { "/".to_string() } else { p }
+    };
 
     create_effect(move |_| {
         spawn_local(async move {
@@ -428,7 +473,7 @@ pub fn App() -> impl IntoView {
         let set_state = set_state.clone();
         START.call_once(move || {
             let set_state = set_state.clone();
-            let _ = gloo_timers::callback::Interval::new(3000, move || {
+            let _ = gloo_timers::callback::Interval::new(1500, move || {
                 spawn_local({
                     let set_state = set_state.clone();
                     async move {
@@ -461,15 +506,12 @@ pub fn App() -> impl IntoView {
             .map(|s| s.ui.clone())
             .unwrap_or_default()
     };
+    let is_log_page = move || path() == "/logs";
+    let no_aside: Option<()> = None;
 
     view! {
         <Layout
-            nav=view! {
-                <Sidebar
-                    current=page.get()
-                    on_navigate=Callback::new(move |p: &'static str| set_page.set(p))
-                />
-            }
+            nav=view! { <Sidebar/> }
             header=view! {
                 <span
                     class=move || {
@@ -482,44 +524,76 @@ pub fn App() -> impl IntoView {
                 >
                     {move || mode().as_str().to_string()}
                 </span>
-                <div class="rounded bg-[#2a2a2a] px-2 py-1 text-xs flex flex-col gap-0.5">
-                    <span>{move || format!("{} target(s)", targets())}</span>
-                    {move || {
-                        target_addresses()
-                            .into_iter()
-                            .map(|addr| view! { <span class="font-mono text-[10px] text-[#888] break-all block">{addr}</span> })
-                            .collect_view()
-                    }}
-                </div>
-            }
-            main=view! {
-                <div class=move || format!("flex-1 min-h-0 flex flex-col overflow-hidden {}", if page.get() != "log" { "hidden" } else { "" }) data-page="log">
-                    <LogPage logs=move || state_slice().as_ref().map(|s| s.logs.clone()).unwrap_or_default()/>
-                </div>
-                <div class=move || format!("flex-1 min-h-0 flex flex-col overflow-hidden {}", if page.get() != "dashboard" { "hidden" } else { "" }) data-page="dashboard">
-                    <DashboardPage state=state_slice()/>
-                </div>
-                <div class=move || format!("flex-1 min-h-0 flex flex-col overflow-hidden {}", if page.get() != "setting" { "hidden" } else { "" }) data-page="setting">
-                    <SettingsPage state=state_slice()/>
-                </div>
-            }
-            aside=Some(view! {
                 {move || {
-                    if page.get() == "log" {
+                    if is_log_page() {
+                        let addrs = target_addresses();
+                        let current = selected_log_target.get();
                         view! {
-                            <PositionsPanel
-                                target_addresses=target_addresses()
-                                positions=state_slice().as_ref().map(|s| s.positions.clone()).unwrap_or_default()
-                                delta_highlight_sec=ui().delta_highlight_sec
-                                _delta_animation_sec=ui().delta_animation_sec
-                            />
-                        }
-                            .into_view()
+                            <div class="rounded bg-[#2a2a2a] px-2 py-1 text-xs flex flex-col gap-1">
+                                <label for="log-target-select" class="text-[#888]">"Log target"</label>
+                                <select
+                                    id="log-target-select"
+                                    class="bg-[#1a1a1a] border border-[#444] text-[#ccc] rounded px-2 py-1 font-mono text-[10px] max-w-[280px]"
+                                    on:change=move |ev| {
+                                        let val = event_target_value(&ev);
+                                        set_selected_log_target.set(if val.is_empty() { None } else { Some(val) });
+                                    }
+                                    prop:value=move || {
+                                        current.as_deref().unwrap_or(LOG_TARGET_ALL).to_string()
+                                    }
+                                >
+                                    <option value="">"All targets"</option>
+                                    {addrs.into_iter().map(|addr| {
+                                        let label = if addr.len() > 14 {
+                                            format!("{}…", &addr[..14])
+                                        } else {
+                                            addr.clone()
+                                        };
+                                        view! { <option value=addr.clone()>{label}</option> }
+                                    }).collect_view()}
+                                </select>
+                            </div>
+                        }.into_view()
                     } else {
-                        view! { <div class="hidden"/> }.into_view()
+                        view! {
+                            <div class="rounded bg-[#2a2a2a] px-2 py-1 text-xs flex flex-col gap-0.5">
+                                <span>{format!("{} target(s)", targets())}</span>
+                                {target_addresses()
+                                    .into_iter()
+                                    .map(|addr| view! { <span class="font-mono text-[10px] text-[#888] break-all block">{addr}</span> })
+                                    .collect_view()}
+                            </div>
+                        }.into_view()
                     }
                 }}
-            })
+            }
+            main=view! {
+                {move || {
+                    let p = path();
+                    if p == "/logs" {
+                        let logs_fn = move || state_slice().as_ref().map(|s| s.logs.clone()).unwrap_or_default();
+                        let target_fn = move || selected_log_target.get();
+                        view! {
+                            <div class="flex-1 min-h-0 flex flex-col overflow-hidden">
+                                <LogPage logs=logs_fn selected_target=target_fn/>
+                            </div>
+                        }.into_view()
+                    } else if p == "/settings" {
+                        view! {
+                            <div class="flex-1 min-h-0 flex flex-col overflow-hidden">
+                                <SettingsPage state=state_slice()/>
+                            </div>
+                        }.into_view()
+                    } else {
+                        view! {
+                            <div class="flex-1 min-h-0 flex flex-col overflow-hidden">
+                                <DashboardPage state=state_slice()/>
+                            </div>
+                        }.into_view()
+                    }
+                }}
+            }
+            aside=no_aside
         />
     }
 }

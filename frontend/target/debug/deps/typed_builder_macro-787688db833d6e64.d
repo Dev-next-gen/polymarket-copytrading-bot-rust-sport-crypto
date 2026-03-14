@@ -1,0 +1,10 @@
+/root/@frogan/fastest-polymarket-copytrading-bot-sport-crypto/frontend/target/debug/deps/typed_builder_macro-787688db833d6e64.d: /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/typed-builder-macro-0.18.2/src/lib.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/typed-builder-macro-0.18.2/src/builder_attr.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/typed-builder-macro-0.18.2/src/field_info.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/typed-builder-macro-0.18.2/src/mutator.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/typed-builder-macro-0.18.2/src/struct_info.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/typed-builder-macro-0.18.2/src/util.rs
+
+/root/@frogan/fastest-polymarket-copytrading-bot-sport-crypto/frontend/target/debug/deps/libtyped_builder_macro-787688db833d6e64.so: /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/typed-builder-macro-0.18.2/src/lib.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/typed-builder-macro-0.18.2/src/builder_attr.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/typed-builder-macro-0.18.2/src/field_info.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/typed-builder-macro-0.18.2/src/mutator.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/typed-builder-macro-0.18.2/src/struct_info.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/typed-builder-macro-0.18.2/src/util.rs
+
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/typed-builder-macro-0.18.2/src/lib.rs:
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/typed-builder-macro-0.18.2/src/builder_attr.rs:
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/typed-builder-macro-0.18.2/src/field_info.rs:
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/typed-builder-macro-0.18.2/src/mutator.rs:
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/typed-builder-macro-0.18.2/src/struct_info.rs:
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/typed-builder-macro-0.18.2/src/util.rs:
