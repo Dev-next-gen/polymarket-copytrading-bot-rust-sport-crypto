@@ -1,1 +1,0 @@
-/root/@frogan/fastest-polymarket-copytrading-bot-sport-crypto/frontend/target/wasm32-unknown-unknown/debug/libcopytrading_ui.rlib: /root/@frogan/fastest-polymarket-copytrading-bot-sport-crypto/frontend/src/lib.rs

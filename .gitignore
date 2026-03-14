@@ -16,6 +16,7 @@ history.toml
 
 # Leptos / Trunk frontend build
 frontend/dist/
+frontend/target/
 
 # IDE and editors
 .idea/

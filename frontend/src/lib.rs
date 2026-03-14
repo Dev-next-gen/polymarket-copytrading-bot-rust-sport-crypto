@@ -1,8 +1,11 @@
 //! Leptos UI for Polymarket copy-trading bot. Fetches /api/state and displays logs, dashboard, settings, positions.
+//! Real-time updates: EventSource subscribes to /api/state/stream (SSE); backend pushes when new activity is logged.
 
 use leptos::*;
 use leptos_router::*;
 use serde::Deserialize;
+use wasm_bindgen::JsCast;
+use web_sys::EventSource;
 
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct TradeLog {
@@ -472,10 +475,10 @@ fn AppInner() -> impl IntoView {
         static START: Once = Once::new();
         let set_state = set_state.clone();
         START.call_once(move || {
-            let set_state = set_state.clone();
-            let _ = gloo_timers::callback::Interval::new(1500, move || {
+            let set_state_interval = set_state.clone();
+            let _ = gloo_timers::callback::Interval::new(5000, move || {
                 spawn_local({
-                    let set_state = set_state.clone();
+                    let set_state = set_state_interval.clone();
                     async move {
                         if let Ok(s) = fetch_state().await {
                             set_state.set(Some(s));
@@ -483,6 +486,22 @@ fn AppInner() -> impl IntoView {
                     }
                 });
             });
+            if let Ok(es) = EventSource::new("/api/state/stream") {
+                let set_state_sse = set_state.clone();
+                let closure =
+                    wasm_bindgen::closure::Closure::<dyn FnMut(web_sys::MessageEvent)>::new(
+                        move |_e: web_sys::MessageEvent| {
+                            let set_state = set_state_sse.clone();
+                            spawn_local(async move {
+                                if let Ok(s) = fetch_state().await {
+                                    set_state.set(Some(s));
+                                }
+                            });
+                        },
+                    );
+                es.set_onmessage(Some(closure.as_ref().unchecked_ref()));
+                closure.forget();
+            }
         });
     });
 
