@@ -5,7 +5,7 @@
 use anyhow::{Context, Result};
 use axum::{
     body::Body,
-    extract::State,
+    extract::{Query, State},
     http::{Request, StatusCode},
     middleware::{self, Next},
     response::sse::{Event, KeepAlive, Sse},
@@ -22,14 +22,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex};
 use tower_http::services::ServeDir;
+use serde::Deserialize;
+use serde_json::Value;
 
 use polymarket_trading_bot::activity_stream;
 use polymarket_trading_bot::api::PolymarketApi;
 use polymarket_trading_bot::config::Config;
-use polymarket_trading_bot::copy_trading::{
-    build_snapshot_map, copy_trade, diff_to_trades, record_entry, should_copy_trade, spawn_exit_loop,
-    CopyTradingConfig, SnapshotMap,
-};
+use polymarket_trading_bot::copy_trading::{spawn_exit_loop, CopyTradingConfig};
 use polymarket_trading_bot::web_state::{self, SharedState};
 
 #[derive(Parser, Debug)]
@@ -75,6 +74,58 @@ async fn sse_state_updates(State(app): State<AppState>) -> Sse<impl futures_util
         }
     };
     Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LeaderboardQuery {
+    #[serde(default)]
+    category: Option<String>,
+    #[serde(default)]
+    time_period: Option<String>,
+    #[serde(default)]
+    order_by: Option<String>,
+    #[serde(default)]
+    limit: Option<u32>,
+    #[serde(default)]
+    offset: Option<u32>,
+}
+
+async fn api_leaderboard(
+    Query(q): Query<LeaderboardQuery>,
+) -> Result<axum::Json<Value>, (StatusCode, &'static str)> {
+    let category = q.category.as_deref().unwrap_or("OVERALL");
+    let time_period = q.time_period.as_deref().unwrap_or("WEEK");
+    let order_by = q.order_by.as_deref().unwrap_or("PNL");
+    let limit = q.limit.unwrap_or(25).clamp(1, 50);
+    let offset = q.offset.unwrap_or(0).min(1000);
+    let limit_s = limit.to_string();
+    let offset_s = offset.to_string();
+    let url = reqwest::Url::parse_with_params(
+        "https://data-api.polymarket.com/v1/leaderboard",
+        &[
+            ("category", category),
+            ("timePeriod", time_period),
+            ("orderBy", order_by),
+            ("limit", limit_s.as_str()),
+            ("offset", offset_s.as_str()),
+        ],
+    )
+    .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "leaderboard URL"))?;
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|_| (StatusCode::BAD_GATEWAY, "leaderboard request failed"))?;
+    if !resp.status().is_success() {
+        return Err((StatusCode::BAD_GATEWAY, "leaderboard API error"));
+    }
+    let body: Value = resp
+        .json()
+        .await
+        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "leaderboard parse error"))?;
+    Ok(axum::Json(body))
 }
 
 async fn api_state(State(app): State<AppState>) -> axum::response::Response {
@@ -137,7 +188,11 @@ fn spawn_web_server(state: SharedState, notify: NotifyTx, port: u16, ui_dir: Pat
         let app = Router::new()
             .route("/api/state", get(api_state))
             .route("/api/state/stream", get(sse_state_updates))
+            .route("/api/leaderboard", get(api_leaderboard))
             .route("/", get(serve_index))
+            .route("/logs", get(serve_index))
+            .route("/settings", get(serve_index))
+            .route("/toptraders", get(serve_index))
             .with_state(app_state)
             .fallback_service(serve_dir)
             .layer(middleware::from_fn(static_asset_mime));
@@ -259,67 +314,19 @@ async fn main() -> Result<()> {
     let poll_secs = copy_config.copy.poll_interval_sec.clamp(0.25, 3600.0);
     let poll_interval = std::time::Duration::from_secs_f64(poll_secs);
 
-    if targets.len() == 1 {
-        // Single target: instant updates via Polymarket activity WebSocket (like the TS project).
-        let target = targets[0].clone();
-        activity_stream::spawn_activity_stream(
-            target.clone(),
-            api.clone(),
-            copy_config.clone(),
-            web_state.clone(),
-            notify_tx.clone(),
-            entries.clone(),
-            simulation,
-        );
-        // Positions UI poll only (no trade copy from positions).
-        let mut initial_load_done = false;
-        loop {
-            let user_lower = target.to_lowercase();
-            match api.get_positions(&user_lower).await {
-                Ok(positions) => {
-                    let pos_list: Vec<_> = positions
-                        .iter()
-                        .map(|p| {
-                            (
-                                p.slug.clone().unwrap_or_else(|| "?".to_string()),
-                                p.outcome.clone().unwrap_or_else(|| "?".to_string()),
-                                p.size,
-                                p.cur_price,
-                            )
-                        })
-                        .collect();
-                    web_state::set_positions(web_state.clone(), user_lower.clone(), pos_list).await;
-                    if !initial_load_done {
-                        info!("INIT | {} | {} position(s)", user_lower, positions.len());
-                        for p in &positions {
-                            let slug = p.slug.as_deref().unwrap_or("?");
-                            let outcome = p.outcome.as_deref().unwrap_or("?");
-                            web_state::push_trade(
-                                web_state.clone(),
-                                "POS".to_string(),
-                                "—".to_string(),
-                                outcome.to_string(),
-                                format!("{:.2}", p.size),
-                                format!("{:.3}", p.cur_price),
-                                slug.to_string(),
-                                Some(user_lower.clone()),
-                                Some("loaded".to_string()),
-                            )
-                            .await;
-                            let _ = notify_tx.send(());
-                        }
-                        initial_load_done = true;
-                    }
-                }
-                Err(e) => log::warn!("get_positions {}: {}", user_lower, e),
-            }
-            tokio::time::sleep(poll_interval).await;
-        }
-    }
+    // Real-time trades for 1 or more targets via activity WebSocket (filter client-side).
+    activity_stream::spawn_activity_stream(
+        targets.clone(),
+        api.clone(),
+        copy_config.clone(),
+        web_state.clone(),
+        notify_tx.clone(),
+        entries.clone(),
+        simulation,
+    );
 
-    info!("Polling targets every {:.2}s (parallel fetch)", poll_secs);
-    let mut prev: HashMap<String, SnapshotMap> = HashMap::new();
-
+    // Positions UI poll only: refresh live positions for dashboard; no copy from positions.
+    let mut initial_done: std::collections::HashSet<String> = std::collections::HashSet::new();
     loop {
         let fetch_futures: Vec<_> = targets
             .iter()
@@ -342,7 +349,6 @@ async fn main() -> Result<()> {
                     continue;
                 }
             };
-            let curr = build_snapshot_map(&positions);
             let pos_list: Vec<_> = positions
                 .iter()
                 .map(|p| {
@@ -356,9 +362,8 @@ async fn main() -> Result<()> {
                 .collect();
             web_state::set_positions(web_state.clone(), user_lower.clone(), pos_list).await;
 
-            let prev_map = prev.get(&user_lower);
-            if prev_map.is_none() {
-                info!("INIT | {} | {} position(s)", user_lower, curr.len());
+            if !initial_done.contains(&user_lower) {
+                info!("INIT | {} | {} position(s)", user_lower, positions.len());
                 for p in &positions {
                     let slug = p.slug.as_deref().unwrap_or("?");
                     let outcome = p.outcome.as_deref().unwrap_or("?");
@@ -376,141 +381,8 @@ async fn main() -> Result<()> {
                     .await;
                     let _ = notify_tx.send(());
                 }
-                prev.insert(user_lower.clone(), curr);
-                continue;
+                initial_done.insert(user_lower);
             }
-            let trades = diff_to_trades(&user_lower, &curr, prev_map.unwrap());
-            for trade in trades {
-                let slug = trade.slug.as_deref().unwrap_or("?");
-                let outcome = trade.outcome.as_deref().unwrap_or("?");
-                // Push every detected trade (BUY and SELL) to the UI; then decide whether to copy.
-                if !should_copy_trade(&copy_config, &trade) {
-                    web_state::push_trade(
-                        web_state.clone(),
-                        "LIVE".to_string(),
-                        trade.side.clone(),
-                        outcome.to_string(),
-                        trade.size.clone(),
-                        trade.price.clone(),
-                        slug.to_string(),
-                        Some(user_lower.clone()),
-                        Some("filtered".to_string()),
-                    )
-                    .await;
-                    let _ = notify_tx.send(());
-                    continue;
-                }
-                if simulation {
-                    info!(
-                        "SIM | {} {} {} size {} @ {} | {} {}",
-                        trade.side,
-                        outcome,
-                        slug,
-                        trade.size,
-                        trade.price,
-                        user_lower,
-                        "skipped"
-                    );
-                    web_state::push_trade(
-                        web_state.clone(),
-                        "SIM".to_string(),
-                        trade.side.clone(),
-                        outcome.to_string(),
-                        trade.size.clone(),
-                        trade.price.clone(),
-                        slug.to_string(),
-                        Some(user_lower.clone()),
-                        Some("skipped".to_string()),
-                    )
-                    .await;
-                    let _ = notify_tx.send(());
-                    continue;
-                }
-                match copy_trade(
-                    &api,
-                    &trade,
-                    copy_config.copy.size_multiplier,
-                    copy_config.filter.buy_amount_limit_in_usd,
-                )
-                .await
-                {
-                    Ok(Some((size, price))) => {
-                        {
-                            let mut ent = entries.lock().await;
-                            record_entry(&mut *ent, &trade.asset_id, size, price);
-                        }
-                        info!(
-                            "LIVE | {} {} {} size {} @ {} | from {} | ok",
-                            trade.side,
-                            outcome,
-                            slug,
-                            trade.size,
-                            trade.price,
-                            user_lower
-                        );
-                        web_state::push_trade(
-                            web_state.clone(),
-                            "LIVE".to_string(),
-                            trade.side.clone(),
-                            outcome.to_string(),
-                            trade.size.clone(),
-                            trade.price.clone(),
-                            slug.to_string(),
-                            Some(user_lower.clone()),
-                            Some("ok".to_string()),
-                        )
-                        .await;
-                        let _ = notify_tx.send(());
-                    }
-                    Ok(None) => {
-                        info!(
-                            "LIVE | {} {} {} size {} @ {} | from {} | ok",
-                            trade.side,
-                            outcome,
-                            slug,
-                            trade.size,
-                            trade.price,
-                            user_lower
-                        );
-                        web_state::push_trade(
-                            web_state.clone(),
-                            "LIVE".to_string(),
-                            trade.side.clone(),
-                            outcome.to_string(),
-                            trade.size.clone(),
-                            trade.price.clone(),
-                            slug.to_string(),
-                            Some(user_lower.clone()),
-                            Some("ok".to_string()),
-                        )
-                        .await;
-                        let _ = notify_tx.send(());
-                    }
-                    Err(e) => {
-                        log::warn!(
-                            "LIVE | {} {} | from {} | FAILED: {}",
-                            trade.side,
-                            slug,
-                            user_lower,
-                            e
-                        );
-                        web_state::push_trade(
-                            web_state.clone(),
-                            "LIVE".to_string(),
-                            trade.side.clone(),
-                            outcome.to_string(),
-                            trade.size.clone(),
-                            trade.price.clone(),
-                            slug.to_string(),
-                            Some(user_lower.clone()),
-                            Some(format!("FAILED: {}", e)),
-                        )
-                        .await;
-                        let _ = notify_tx.send(());
-                    }
-                }
-            }
-            prev.insert(user_lower, curr);
         }
         tokio::time::sleep(poll_interval).await;
     }

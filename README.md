@@ -1,6 +1,6 @@
 # Polymarket copy-trading bot
 
-Copy trades from one or more leaders on Polymarket with a size multiplier, optional take-profit/stop-loss, and a web UI for logs and positions. Single leader = real-time WebSocket; multiple leaders = parallel polling. Built in Rust.
+Copy trades from one or more leaders on Polymarket with a size multiplier, optional take-profit/stop-loss, and a web UI for logs and positions. Real-time WebSocket for all targets (filtered client-side). Built in Rust.
 
 ---
 
@@ -62,12 +62,9 @@ Open **http://localhost:8000** for the UI. The API is up either way; the dashboa
 
 ---
 
-## Single target vs multiple
+## Real-time for one or many targets
 
-- **One address** in config → the bot subscribes to Polymarket’s **activity WebSocket** (`wss://ws-live-data.polymarket.com`). Trades are pushed as they happen; you copy with minimal delay and see them in the UI in real time.
-- **Several addresses** → the bot **polls positions in parallel** every `poll_interval_sec` and diffs to detect buys/sells. No WebSocket for multi-leader; that’s a Polymarket API limitation.
-
-So: one leader = instant; many leaders = fast polling. Both paths use the same filters, multiplier, and exit logic.
+The bot subscribes to Polymarket’s **activity WebSocket** (`wss://ws-live-data.polymarket.com`) once and filters client-side by your target address(es). So you get **instant trade flow for every leader**—one or ten. Trades are pushed as they happen; you copy with minimal delay and see them in the UI in real time. A separate loop only refreshes positions for the dashboard; all copying is driven by the stream.
 
 ---
 

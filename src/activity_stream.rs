@@ -50,7 +50,7 @@ fn activity_payload_to_leader_trade(p: &serde_json::Value) -> Option<LeaderTrade
 }
 
 async fn run_activity_stream_loop(
-    target_lower: String,
+    targets_lower: HashSet<String>,
     api: Arc<crate::api::PolymarketApi>,
     config: CopyTradingConfig,
     web_state: web_state::SharedState,
@@ -111,7 +111,7 @@ async fn run_activity_stream_loop(
             Some(p) => p,
             None => continue,
         };
-        if proxy != target_lower {
+        if !targets_lower.contains(&proxy) {
             continue;
         }
         let trade = match activity_payload_to_leader_trade(payload) {
@@ -141,7 +141,7 @@ async fn run_activity_stream_loop(
                 trade.size.clone(),
                 trade.price.clone(),
                 slug.to_string(),
-                Some(target_lower.clone()),
+                Some(proxy.clone()),
                 Some("filtered".to_string()),
             )
             .await;
@@ -154,7 +154,7 @@ async fn run_activity_stream_loop(
             let outcome = trade.outcome.as_deref().unwrap_or("?");
             info!(
                 "SIM | {} {} {} size {} @ {} | {} skipped",
-                trade.side, outcome, slug, trade.size, trade.price, target_lower
+                trade.side, outcome, slug, trade.size, trade.price, proxy
             );
             web_state::push_trade(
                 web_state.clone(),
@@ -164,7 +164,7 @@ async fn run_activity_stream_loop(
                 trade.size.clone(),
                 trade.price.clone(),
                 slug.to_string(),
-                Some(target_lower.clone()),
+                Some(proxy.clone()),
                 Some("skipped".to_string()),
             )
             .await;
@@ -189,7 +189,7 @@ async fn run_activity_stream_loop(
                 let outcome = trade.outcome.as_deref().unwrap_or("?");
                 info!(
                     "LIVE | {} {} {} size {} @ {} | from {} | ok",
-                    trade.side, outcome, slug, trade.size, trade.price, target_lower
+                    trade.side, outcome, slug, trade.size, trade.price, proxy
                 );
                 web_state::push_trade(
                     web_state.clone(),
@@ -199,7 +199,7 @@ async fn run_activity_stream_loop(
                     trade.size.clone(),
                     trade.price.clone(),
                     slug.to_string(),
-                    Some(target_lower.clone()),
+                    Some(proxy.clone()),
                     Some("ok".to_string()),
                 )
                 .await;
@@ -210,7 +210,7 @@ async fn run_activity_stream_loop(
                 let outcome = trade.outcome.as_deref().unwrap_or("?");
                 info!(
                     "LIVE | {} {} {} size {} @ {} | from {} | ok",
-                    trade.side, outcome, slug, trade.size, trade.price, target_lower
+                    trade.side, outcome, slug, trade.size, trade.price, proxy
                 );
                 web_state::push_trade(
                     web_state.clone(),
@@ -220,7 +220,7 @@ async fn run_activity_stream_loop(
                     trade.size.clone(),
                     trade.price.clone(),
                     slug.to_string(),
-                    Some(target_lower.clone()),
+                    Some(proxy.clone()),
                     Some("ok".to_string()),
                 )
                 .await;
@@ -228,7 +228,7 @@ async fn run_activity_stream_loop(
             }
             Err(e) => {
                 let slug = trade.slug.as_deref().unwrap_or("?");
-                warn!("LIVE | {} {} | from {} | FAILED: {}", trade.side, slug, target_lower, e);
+                warn!("LIVE | {} {} | from {} | FAILED: {}", trade.side, slug, proxy, e);
                 let outcome = trade.outcome.as_deref().unwrap_or("?");
                 web_state::push_trade(
                     web_state.clone(),
@@ -238,7 +238,7 @@ async fn run_activity_stream_loop(
                     trade.size.clone(),
                     trade.price.clone(),
                     slug.to_string(),
-                    Some(target_lower.clone()),
+                    Some(proxy.clone()),
                     Some(format!("FAILED: {}", e)),
                 )
                 .await;
@@ -251,9 +251,9 @@ async fn run_activity_stream_loop(
 }
 
 /// Spawn background task that connects to activity stream, subscribes to trades,
-/// filters by target, and runs copy-trade (or sim). Reconnects on disconnect.
+/// filters by target set (1 or more), and runs copy-trade (or sim). Reconnects on disconnect.
 pub fn spawn_activity_stream(
-    target_address: String,
+    targets: Vec<String>,
     api: Arc<crate::api::PolymarketApi>,
     config: CopyTradingConfig,
     web_state: web_state::SharedState,
@@ -261,15 +261,16 @@ pub fn spawn_activity_stream(
     entries: Arc<Mutex<HashMap<String, crate::copy_trading::Entry>>>,
     simulation: bool,
 ) {
-    let target_lower = target_address.to_lowercase();
+    let targets_lower: HashSet<String> = targets.iter().map(|s| s.to_lowercase()).collect();
+    let n = targets_lower.len();
     info!(
-        "Activity stream | 1 target {} (instant trades)",
-        target_lower
+        "Activity stream | {} target(s) (instant trades via WebSocket)",
+        n
     );
     tokio::spawn(async move {
         loop {
             match run_activity_stream_loop(
-                target_lower.clone(),
+                targets_lower.clone(),
                 api.clone(),
                 config.clone(),
                 web_state.clone(),

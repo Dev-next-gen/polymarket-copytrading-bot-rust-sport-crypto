@@ -44,6 +44,19 @@ pub struct UiConfig {
     pub delta_animation_sec: u64,
 }
 
+#[derive(Clone, Debug, Default, Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LeaderboardEntry {
+    pub rank: Option<String>,
+    pub proxy_wallet: Option<String>,
+    pub user_name: Option<String>,
+    pub vol: Option<f64>,
+    pub pnl: Option<f64>,
+    pub profile_image: Option<String>,
+    pub x_username: Option<String>,
+    pub verified_badge: Option<bool>,
+}
+
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct BotState {
     pub logs: Vec<TradeLog>,
@@ -61,6 +74,70 @@ async fn fetch_state() -> Result<BotState, String> {
         .json()
         .await
         .map_err(|e| e.to_string())
+}
+
+async fn fetch_leaderboard(
+    category: &str,
+    time_period: &str,
+    order_by: &str,
+) -> Result<Vec<LeaderboardEntry>, String> {
+    let url = format!(
+        "/api/leaderboard?category={}&timePeriod={}&orderBy={}&limit=50",
+        urlencoding_encode(category),
+        urlencoding_encode(time_period),
+        urlencoding_encode(order_by),
+    );
+    gloo_net::http::Request::get(&url)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?
+        .json()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+const TARGET_COLORS_KEY: &str = "target_colors";
+
+fn random_hex_color() -> String {
+    let r = (js_sys::Math::random() * 256.0) as u8;
+    let g = (js_sys::Math::random() * 256.0) as u8;
+    let b = (js_sys::Math::random() * 256.0) as u8;
+    format!("#{:02x}{:02x}{:02x}", r, g, b)
+}
+
+fn load_target_colors_from_storage() -> std::collections::HashMap<String, String> {
+    let window = match web_sys::window() {
+        Some(w) => w,
+        None => return std::collections::HashMap::new(),
+    };
+    let storage = match window.local_storage() {
+        Ok(Some(s)) => s,
+        _ => return std::collections::HashMap::new(),
+    };
+    match storage.get_item(TARGET_COLORS_KEY) {
+        Ok(Some(s)) => serde_json::from_str(&s).unwrap_or_default(),
+        _ => std::collections::HashMap::new(),
+    }
+}
+
+fn save_target_colors_to_storage(map: &std::collections::HashMap<String, String>) {
+    if let Some(window) = web_sys::window() {
+        if let Ok(Some(storage)) = window.local_storage() {
+            let _ = storage.set_item(TARGET_COLORS_KEY, &serde_json::to_string(map).unwrap_or_else(|_| "{}".to_string()));
+        }
+    }
+}
+
+fn urlencoding_encode(s: &str) -> String {
+    let mut out = String::new();
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.' {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{:02X}", b));
+        }
+    }
+    out
 }
 
 #[component]
@@ -126,6 +203,16 @@ fn Sidebar() -> impl IntoView {
             >
                 "Settings"
             </A>
+            <A
+                href="/toptraders"
+                class=move || {
+                    let binding = path();
+                    if binding.trim_end_matches('/') == "/toptraders" { "sidebar-link active" }
+                    else { "sidebar-link" }
+                }
+            >
+                "Top Traders"
+            </A>
         </div>
     }
 }
@@ -134,9 +221,11 @@ fn Sidebar() -> impl IntoView {
 fn LogPage(
     logs: impl Fn() -> Vec<TradeLog> + 'static,
     selected_target: impl Fn() -> Option<String> + 'static,
+    target_colors: RwSignal<std::collections::HashMap<String, String>>,
 ) -> impl IntoView {
     view! {
         {move || {
+            let _ = target_colors.get();
             let all_logs = logs();
             let filtered = match selected_target() {
                 None => all_logs,
@@ -196,6 +285,8 @@ fn LogPage(
                             let r_slug = r.slug.clone();
                             let r_target = r.target_address.clone();
                             let r_status = r.copy_status.clone();
+                            let colors = target_colors.get();
+                            let cell_color = r_target.as_ref().and_then(|a| colors.get(a).cloned()).unwrap_or_else(|| "#8af".to_string());
                             view! {
                                 <tr key=format!("{:?}-{}", r_time, i) class="border-b border-[#333]">
                                     <td class="p-2">{time_short}</td>
@@ -211,7 +302,7 @@ fn LogPage(
                                     </td>
                                     <td class="p-2">{r_price}</td>
                                     <td class="p-2 text-[#ccc] break-words">{r_slug}</td>
-                                    <td class="p-2 font-mono text-[11px] text-[#8af] break-all">
+                                    <td class="p-2 font-mono text-[11px] break-all" style=format!("color: {}", cell_color)>
                                         {r_target.unwrap_or_default()}
                                     </td>
                                     <td class="p-2">{r_status.unwrap_or_default()}</td>
@@ -299,7 +390,10 @@ fn DashboardPage(state: Option<BotState>) -> impl IntoView {
 }
 
 #[component]
-fn SettingsPage(state: Option<BotState>) -> impl IntoView {
+fn SettingsPage(
+    state: Option<BotState>,
+    target_colors: RwSignal<std::collections::HashMap<String, String>>,
+) -> impl IntoView {
     let mode = state.as_ref().map(|s| s.status.mode.clone()).unwrap_or_else(|| "—".to_string());
     let targets = state.as_ref().map(|s| s.status.targets).unwrap_or(0);
     let addresses = state
@@ -315,7 +409,7 @@ fn SettingsPage(state: Option<BotState>) -> impl IntoView {
     view! {
         <div class="flex-1 overflow-auto text-[#888] p-4">
             <h1 class="text-lg font-medium text-[#ccc] mb-2">"Settings"</h1>
-            <p class="text-sm mb-4">"Current bot configuration (read-only)."</p>
+            <p class="text-sm mb-4">"Current bot configuration. Target colors apply to the Log page."</p>
             <div class="flex flex-col gap-3 max-w-md">
                 <div class="rounded-lg border border-[#333] bg-[#1a1a1a] p-3 flex items-center justify-between gap-2">
                     <span class="text-sm text-[#aaa]">"Mode"</span>
@@ -325,15 +419,38 @@ fn SettingsPage(state: Option<BotState>) -> impl IntoView {
                     <span class="text-sm text-[#aaa]">"Targets"</span>
                     <span class="text-xs text-[#ccc] tabular-nums">{targets}</span>
                 </div>
-                <div class="rounded-lg border border-[#333] bg-[#1a1a1a] p-3 flex flex-col gap-1">
-                    <span class="text-sm text-[#aaa]">"Target addresses"</span>
-                    <span class="text-xs text-[#ccc] font-mono break-all">
-                        {if addresses.is_empty() {
-                            "—".to_string()
-                        } else {
-                            addresses.join(", ")
-                        }}
-                    </span>
+                <div class="rounded-lg border border-[#333] bg-[#1a1a1a] p-3 flex flex-col gap-2">
+                    <span class="text-sm text-[#aaa]">"Target address · color (for Log page)"</span>
+                    {if addresses.is_empty() {
+                        view! { <span class="text-xs text-[#666]">"—"</span> }.into_view()
+                    } else {
+                        view! {
+                            <div class="flex flex-col gap-2 mt-1">
+                                {addresses.into_iter().map(|addr| {
+                                    let addr_for_color = addr.clone();
+                                    let color = move || {
+                                        target_colors.get().get(&addr_for_color).cloned().unwrap_or_else(|| "#8af".to_string())
+                                    };
+                                    let addr_clone = addr.clone();
+                                    view! {
+                                        <div class="flex items-center gap-2 flex-wrap">
+                                            <input
+                                                type="color"
+                                                class="w-8 h-8 cursor-pointer rounded border border-[#444] bg-transparent"
+                                                prop:value=color
+                                                on:input=move |ev| {
+                                                    let val = event_target_value(&ev);
+                                                    target_colors.update(|m| { m.insert(addr_clone.clone(), val.clone()); });
+                                                    save_target_colors_to_storage(&target_colors.get());
+                                                }
+                                            />
+                                            <span class="text-xs text-[#ccc] font-mono break-all">{addr}</span>
+                                        </div>
+                                    }
+                                }).collect_view()}
+                            </div>
+                        }.into_view()
+                    }}
                 </div>
                 <div class="rounded-lg border border-[#333] bg-[#1a1a1a] p-3 flex items-center justify-between gap-2">
                     <span class="text-sm text-[#aaa]">"Wallet"</span>
@@ -350,6 +467,134 @@ fn SettingsPage(state: Option<BotState>) -> impl IntoView {
                     <span class="text-xs text-[#ccc] tabular-nums">{ui.delta_animation_sec}</span>
                 </div>
             </div>
+        </div>
+    }
+}
+
+#[component]
+fn TopTradersPage() -> impl IntoView {
+    let (category, set_category) = create_signal::<String>("OVERALL".to_string());
+    let (time_period, set_time_period) = create_signal::<String>("WEEK".to_string());
+    let (order_by, set_order_by) = create_signal::<String>("PNL".to_string());
+    let leaderboard = create_resource(
+        move || (category.get(), time_period.get(), order_by.get()),
+        |(c, t, o)| async move { fetch_leaderboard(&c, &t, &o).await },
+    );
+    view! {
+        <div class="flex-1 overflow-auto flex flex-col min-h-0 p-4">
+            <h1 class="text-lg font-medium text-[#ccc] mb-3">"Top traders"</h1>
+            <p class="text-xs text-[#666] mb-3">"Polymarket leaderboard (by PnL or volume)."</p>
+            <div class="flex flex-wrap gap-2 mb-3">
+                <label class="text-xs text-[#888] flex items-center gap-1">
+                    "Category"
+                    <select
+                        class="bg-[#1a1a1a] border border-[#444] text-[#ccc] rounded px-2 py-1 text-xs"
+                        on:change=move |ev| {
+                            let v = event_target_value(&ev);
+                            set_category.set(v);
+                        }
+                        prop:value=move || category.get()
+                    >
+                        <option value="OVERALL">"Overall"</option>
+                        <option value="POLITICS">"Politics"</option>
+                        <option value="SPORTS">"Sports"</option>
+                        <option value="CRYPTO">"Crypto"</option>
+                        <option value="ECONOMICS">"Economics"</option>
+                        <option value="TECH">"Tech"</option>
+                        <option value="FINANCE">"Finance"</option>
+                        <option value="CULTURE">"Culture"</option>
+                    </select>
+                </label>
+                <label class="text-xs text-[#888] flex items-center gap-1">
+                    "Period"
+                    <select
+                        class="bg-[#1a1a1a] border border-[#444] text-[#ccc] rounded px-2 py-1 text-xs"
+                        on:change=move |ev| {
+                            let v = event_target_value(&ev);
+                            set_time_period.set(v);
+                        }
+                        prop:value=move || time_period.get()
+                    >
+                        <option value="DAY">"Day"</option>
+                        <option value="WEEK">"Week"</option>
+                        <option value="MONTH">"Month"</option>
+                        <option value="ALL">"All"</option>
+                    </select>
+                </label>
+                <label class="text-xs text-[#888] flex items-center gap-1">
+                    "Sort"
+                    <select
+                        class="bg-[#1a1a1a] border border-[#444] text-[#ccc] rounded px-2 py-1 text-xs"
+                        on:change=move |ev| {
+                            let v = event_target_value(&ev);
+                            set_order_by.set(v);
+                        }
+                        prop:value=move || order_by.get()
+                    >
+                        <option value="PNL">"PnL"</option>
+                        <option value="VOL">"Volume"</option>
+                    </select>
+                </label>
+            </div>
+            {move || {
+                match leaderboard.get() {
+                    None => view! {
+                        <p class="text-[#888] text-sm">"Loading…"</p>
+                    }.into_view(),
+                    Some(Err(e)) => view! {
+                        <p class="text-red-400 text-sm">"Error: " {e}</p>
+                    }.into_view(),
+                    Some(Ok(entries)) => {
+                        if entries.is_empty() {
+                            view! { <p class="text-[#666] text-sm">"No entries."</p> }.into_view()
+                        } else {
+                            view! {
+                                <div class="overflow-x-auto border border-[#333] rounded-lg">
+                                    <table class="w-full border-collapse text-xs">
+                                        <thead>
+                                            <tr class="bg-[#1a1a1a]">
+                                                <th class="p-2 text-left text-[#888] font-medium border-b border-[#333]">"#"</th>
+                                                <th class="p-2 text-left text-[#888] font-medium border-b border-[#333]">"Address"</th>
+                                                <th class="p-2 text-right text-[#888] font-medium border-b border-[#333]">"Volume"</th>
+                                                <th class="p-2 text-right text-[#888] font-medium border-b border-[#333]">"PnL"</th>
+                                                <th class="p-2 text-left text-[#888] font-medium border-b border-[#333]">"X"</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {entries
+                                                .into_iter()
+                                                .enumerate()
+                                                .map(|(i, e)| {
+                                                    let rank = e.rank.clone().unwrap_or_else(|| (i + 1).to_string());
+                                                    let addr = e.proxy_wallet.clone().unwrap_or_else(|| "—".to_string());
+                                                    let vol = e.vol.map(|v| format!("{:.0}", v)).unwrap_or_else(|| "—".to_string());
+                                                    let pnl = e.pnl.map(|p| {
+                                                        let s = format!("{:.2}", p);
+                                                        if p >= 0.0 { format!("+{}", s) } else { s }
+                                                    }).unwrap_or_else(|| "—".to_string());
+                                                    let pnl_class = e.pnl.map(|p| if p >= 0.0 { "text-green-400" } else { "text-red-400" }).unwrap_or_else(|| "text-[#aaa]");
+                                                    let x_user = e.x_username.clone().unwrap_or_else(|| "—".to_string());
+                                                    view! {
+                                                        <tr class="border-b border-[#333] hover:bg-[#252525]">
+                                                            <td class="p-2 text-[#aaa] tabular-nums">{rank}</td>
+                                                            <td class="p-2 text-[#ccc] font-mono text-[11px]">
+                                                                <span class="break-all" title=addr.clone()>{addr}</span>
+                                                            </td>
+                                                            <td class="p-2 text-right text-[#aaa] tabular-nums">{vol}</td>
+                                                            <td class=format!("p-2 text-right tabular-nums {}", pnl_class)>{pnl}</td>
+                                                            <td class="p-2 text-[#888]">{x_user}</td>
+                                                        </tr>
+                                                    }
+                                                })
+                                                .collect_view()}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            }.into_view()
+                        }
+                    }
+                }
+            }}
         </div>
     }
 }
@@ -462,6 +707,7 @@ pub fn App() -> impl IntoView {
 fn AppInner() -> impl IntoView {
     let (state, set_state) = create_signal::<Option<BotState>>(None);
     let (selected_log_target, set_selected_log_target) = create_signal::<Option<String>>(None);
+    let target_colors = create_rw_signal::<std::collections::HashMap<String, String>>(load_target_colors_from_storage());
     let location = use_location();
     let path = move || {
         let p = location.pathname.get();
@@ -512,6 +758,24 @@ fn AppInner() -> impl IntoView {
     });
 
     let state_slice = move || state.get();
+    create_effect(move |_| {
+        if let Some(s) = state_slice() {
+            if let Some(addrs) = &s.status.target_addresses {
+                let mut map = target_colors.get();
+                let mut updated = false;
+                for a in addrs {
+                    if !map.contains_key(a) {
+                        map.insert(a.clone(), random_hex_color());
+                        updated = true;
+                    }
+                }
+                if updated {
+                    target_colors.set(map.clone());
+                    save_target_colors_to_storage(&map);
+                }
+            }
+        }
+    });
     let mode = move || {
         state_slice()
             .as_ref()
@@ -600,13 +864,19 @@ fn AppInner() -> impl IntoView {
                         let target_fn = move || selected_log_target.get();
                         view! {
                             <div class="flex-1 min-h-0 flex flex-col overflow-hidden">
-                                <LogPage logs=logs_fn selected_target=target_fn/>
+                                <LogPage logs=logs_fn selected_target=target_fn target_colors=target_colors/>
                             </div>
                         }.into_view()
                     } else if p == "/settings" {
                         view! {
                             <div class="flex-1 min-h-0 flex flex-col overflow-hidden">
-                                <SettingsPage state=state_slice()/>
+                                <SettingsPage state=state_slice() target_colors=target_colors/>
+                            </div>
+                        }.into_view()
+                    } else if p == "/toptraders" {
+                        view! {
+                            <div class="flex-1 min-h-0 flex flex-col overflow-hidden">
+                                <TopTradersPage/>
                             </div>
                         }.into_view()
                     } else {
