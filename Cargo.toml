@@ -79,3 +79,4 @@ axum = { version = "0.7", features = ["json"] }
 tower = "0.4"
 async-stream = "0.3"
 tower-http = { version = "0.5", features = ["fs"] }
+dotenvy = "0.15"

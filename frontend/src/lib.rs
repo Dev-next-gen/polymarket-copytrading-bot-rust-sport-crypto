@@ -290,7 +290,9 @@ fn LogPage(
             let rows: Vec<_> = filtered.into_iter().rev().collect();
             let is_loading = loading();
             view! {
-                <div class="flex-1 overflow-auto overflow-x-auto min-h-0 flex flex-col p-4">
+                <div class="flex-1 overflow-auto overflow-x-auto min-h-0 flex flex-col p-4" style="min-height: 200px;">
+                    <h1 class="page-title mb-2">"Logs"</h1>
+                    <p class="page-desc mb-4">"Target activities and copy-trade events."</p>
                     {if is_loading {
                         view! {
                             <p class="text-sm text-muted">"Loading activities…"</p>
@@ -387,21 +389,309 @@ fn LogPage(
     }
 }
 
+#[derive(Clone)]
+struct AgentMessage {
+    role: String,
+    content: String,
+}
+
+/// Renders a subset of markdown to safe HTML for assistant messages (Claude-style).
+/// Escapes HTML, then: **bold**, double newline = paragraph, **Section** or **Section** — gets heading class.
+fn markdown_to_safe_html(s: &str) -> String {
+    fn escape(s: &str) -> String {
+        s.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+            .replace('"', "&quot;")
+    }
+    fn bold_to_html(line: &str) -> String {
+        let mut out = String::new();
+        let mut rest = line;
+        while let Some(start) = rest.find("**") {
+            out.push_str(&rest[..start]);
+            rest = &rest[start + 2..];
+            if let Some(end) = rest.find("**") {
+                out.push_str("<strong>");
+                out.push_str(&rest[..end]);
+                out.push_str("</strong>");
+                rest = &rest[end + 2..];
+            } else {
+                out.push_str("**");
+                break;
+            }
+        }
+        out.push_str(rest);
+        out
+    }
+    let escaped = escape(s);
+    let mut out = String::new();
+    for block in escaped.split("\n\n") {
+        let block = block.trim();
+        if block.is_empty() {
+            continue;
+        }
+        let line = block.replace("\n", " ");
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if let Some(inner) = line.strip_prefix("**").and_then(|t| t.strip_suffix("**")) {
+            if !inner.contains("**") {
+                out.push_str("<div class=\"agent-section-header\">");
+                out.push_str(inner);
+                out.push_str("</div>");
+                continue;
+            }
+        }
+        if line.starts_with("**") {
+            if let Some(close) = line[2..].find("**") {
+                let title = line[2..2 + close].trim();
+                let rest = line[2 + close + 2..].trim();
+                if !title.is_empty() && (rest.is_empty() || rest.starts_with('-') || rest.starts_with('—')) {
+                    out.push_str("<div class=\"agent-section-header\">");
+                    out.push_str(title);
+                    out.push_str("</div>");
+                    if !rest.is_empty() {
+                        out.push_str("<p>");
+                        out.push_str(&bold_to_html(rest));
+                        out.push_str("</p>");
+                    }
+                    continue;
+                }
+                out.push_str("<div class=\"agent-section-header\">");
+                out.push_str(title);
+                out.push_str("</div><p>");
+                out.push_str(&bold_to_html(rest));
+                out.push_str("</p>");
+                continue;
+            }
+        }
+        out.push_str("<p>");
+        out.push_str(&bold_to_html(&line));
+        out.push_str("</p>");
+    }
+    if out.is_empty() {
+        out.push_str("<p>");
+        out.push_str(&escaped.replace("\n", "<br/>"));
+        out.push_str("</p>");
+    }
+    out
+}
+
+async fn agent_chat_request(message: String) -> Result<String, String> {
+    #[derive(serde::Deserialize)]
+    struct Response {
+        reply: String,
+    }
+    let resp = gloo_net::http::Request::post("/api/agent/chat")
+        .json(&serde_json::json!({ "message": message }))
+        .map_err(|e| e.to_string())?
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.ok() {
+        let text = resp.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+        return Err(text);
+    }
+    let out: Response = resp.json().await.map_err(|e| e.to_string())?;
+    Ok(out.reply)
+}
+
 #[component]
-fn AgentPage() -> impl IntoView {
+fn AgentPage(
+    state: Option<BotState>,
+    input_value: ReadSignal<String>,
+    set_input_value: WriteSignal<String>,
+    messages: ReadSignal<Vec<AgentMessage>>,
+    set_messages: WriteSignal<Vec<AgentMessage>>,
+    loading: ReadSignal<bool>,
+    set_loading: WriteSignal<bool>,
+    error: ReadSignal<Option<String>>,
+    set_error: WriteSignal<Option<String>>,
+) -> impl IntoView {
+    let send_message = move |msg: String| {
+        let msg = msg.trim().to_string();
+        if msg.is_empty() {
+            return;
+        }
+        set_error.set(None);
+        set_messages.update(|v| v.push(AgentMessage { role: "user".to_string(), content: msg.clone() }));
+        set_loading.set(true);
+        spawn_local(async move {
+            match agent_chat_request(msg).await {
+                Ok(reply) => {
+                    set_messages.update(|v| v.push(AgentMessage { role: "assistant".to_string(), content: reply }));
+                }
+                Err(e) => {
+                    set_error.set(Some(e));
+                }
+            }
+            set_loading.set(false);
+        });
+    };
+
+    let has_positions = state.as_ref().map(|s| !s.positions.is_empty()).unwrap_or(false);
+    let mut suggestion_list: Vec<String> = vec![
+        "Research current market".to_string(),
+        "Full analysis of my book".to_string(),
+        "Check risk and exposure".to_string(),
+        "Market overview with context".to_string(),
+    ];
+    if has_positions {
+        suggestion_list.push("Analyze my positions".to_string());
+    }
+
+    let chevron_down = "<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'><polyline points='6 9 12 15 18 9'/></svg>";
+    let paperclip = "<svg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'><path d='M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48'/></svg>";
+    let send_icon = "<svg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'><line x1='22' y1='2' x2='11' y2='13'/><polygon points='22 2 15 22 11 13 2 9 22 2'/></svg>";
+    let user_icon = "<svg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'><path d='M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2'/><circle cx='12' cy='7' r='4'/></svg>";
+
+    const AGENT_NAME: &str = "ghul";
+    let welcome_text = if has_positions {
+        "I'm your analysis layer — Mahoraga-style: Monitor and Analyze only, no execution. Connect in Portfolio and I'll pre-load your positions, then research every question (signals, sentiment, catalysts, red flags) and give you clear guidance. Try \"Full analysis of my book\" or \"Analyze my positions\"."
+    } else {
+        "I'm your analysis layer — Mahoraga-style: Monitor and Analyze only, no execution. I'll research every question (signals, sentiment, catalysts, red flags) and give you clear guidance. Until then, ask for a market overview or risk check."
+    };
+    let conversations = [
+        ("Portfolio Analysis", "2m ago"),
+        ("BTC Entry Strategy", "14m ago"),
+        ("Risk Parameters Review", "1h ago"),
+        ("Market Sentiment Check", "3h ago"),
+        ("DCA Configuration", "Yesterday"),
+    ];
+    let query_input_ref = NodeRef::<html::Input>::new();
+    let has_focused = create_rw_signal(false);
+    create_effect(move |_| {
+        if has_focused.get() {
+            return;
+        }
+        if let Some(el) = query_input_ref.get() {
+            let _ = el.focus();
+            has_focused.set(true);
+        }
+    });
     view! {
-        <div class="flex-1 overflow-auto p-4">
-            <h1 class="page-title">"Agent"</h1>
-            <p class="page-desc mb-4">"Autonomous market intelligence and analysis."</p>
-            <div class="card p-4 max-w-2xl">
-                <p class="text-sm text-muted">
-                    "Connect your exchange in Portfolio and the agent will pre-load positions and wallet, then research signals, sentiment, catalysts, and risk. Ask for market overview or risk check."
-                </p>
-                <div class="mt-4 flex flex-wrap gap-2">
-                    <button class="btn btn-primary">"Research current market"</button>
-                    <button class="btn btn-secondary">"Full analysis of my book"</button>
-                    <button class="btn btn-secondary">"Check risk and exposure"</button>
+        <div class="agent-page-layout">
+            <aside class="agent-conversations-panel">
+                <div class="agent-conversations-header">
+                    <span class="agent-conversations-title">"CONVERSATIONS"</span>
+                    <button type="button" class="agent-conversations-new" title="New chat">"+"</button>
                 </div>
+                <input type="text" class="agent-conversations-search" placeholder="Search..." />
+                <div class="agent-conversations-list">
+                    {conversations.into_iter().map(|(title, ago)| view! {
+                        <button type="button" class="agent-conversation-item">
+                            <span class="agent-conversation-title">{title}</span>
+                            <span class="agent-conversation-ago">{ago}</span>
+                        </button>
+                    }).collect_view()}
+                </div>
+            </aside>
+            <div class="agent-chat-main flex-1 overflow-auto flex flex-col min-w-0">
+                <div class="agent-chat-scroll p-4 flex flex-col">
+            <div class="agent-header">
+                <span class="agent-name">{AGENT_NAME}</span>
+                <button type="button" class="agent-version-btn">
+                    <span>{format!("{} 1.0.0v", AGENT_NAME)}</span>
+                    <span inner_html=chevron_down></span>
+                </button>
+                <span class="agent-tagline">"Autonomous Market Intelligence"</span>
+                <span class="agent-status">
+                    <span class="agent-status-dot"></span>
+                    "ONLINE"
+                </span>
+            </div>
+            <div class="agent-message-card">
+                <div class="agent-avatar agent-avatar-ghul">{AGENT_NAME}</div>
+                <div class="agent-message-body">
+                    <p class="agent-message-label">{AGENT_NAME}</p>
+                    <p class="agent-message-text">
+                        {welcome_text}
+                    </p>
+                </div>
+            </div>
+            {move || {
+                let msgs = messages.get();
+                msgs.into_iter()
+                    .map(|m| {
+                        let is_user = m.role == "user";
+                        let content = m.content;
+                        let is_user = is_user;
+                        let body_html = if is_user {
+                            None
+                        } else {
+                            Some(markdown_to_safe_html(&content))
+                        };
+                        view! {
+                            <div class=if is_user { "agent-message-card agent-message-user" } else { "agent-message-card agent-message-assistant" }>
+                                {if !is_user {
+                                    view! { <div class="agent-avatar agent-avatar-ghul">{AGENT_NAME}</div> }.into_view()
+                                } else {
+                                    view! { <div class="agent-avatar agent-avatar-user" inner_html=user_icon></div> }.into_view()
+                                }}
+                                <div class="agent-message-body">
+                                    <p class="agent-message-label">{if is_user { "You" } else { AGENT_NAME }}</p>
+                                    {if let Some(html) = body_html {
+                                        view! { <div class="agent-message-text agent-message-markdown" inner_html=html></div> }.into_view()
+                                    } else {
+                                        view! { <p class="agent-message-text">{content}</p> }.into_view()
+                                    }}
+                                </div>
+                            </div>
+                        }
+                    })
+                    .collect_view()
+            }}
+            {move || loading.get().then(|| view! { <p class="text-sm text-muted mb-2">{format!("{} is thinking…", AGENT_NAME)}</p> })}
+            {move || error.get().map(|e| view! { <p class="text-danger text-sm mb-2">"Error: " {e}</p> })}
+            </div>
+            <div class="agent-chat-footer">
+            <div class="agent-suggestions">
+                {suggestion_list.into_iter().map(|s| {
+                    let send = send_message.clone();
+                    let msg = s.clone();
+                    view! {
+                        <button type="button" class="agent-suggestion-pill" on:click=move |_| send(msg.clone())>
+                            {s}
+                        </button>
+                    }
+                }).collect_view()}
+            </div>
+            <div class="agent-query-bar">
+                <span class="text-muted" inner_html=paperclip></span>
+                <input
+                    node_ref=query_input_ref
+                    type="text"
+                    placeholder=format!("Query {}...", AGENT_NAME)
+                    class="flex-1 min-w-0"
+                    attr:autofocus=true
+                    prop:value=move || input_value.get()
+                    on:input=move |ev| set_input_value.set(event_target_value(&ev))
+                    on:keydown=move |ev| {
+                        if ev.key() == "Enter" {
+                            let _ = ev.prevent_default();
+                            let msg = input_value.get();
+                            set_input_value.set(String::new());
+                            send_message(msg);
+                        }
+                    }
+                />
+                <button type="button" class="agent-query-send">
+                    <span>{format!("{} 1.0.0v", AGENT_NAME)}</span>
+                    <span inner_html=chevron_down></span>
+                </button>
+                <button
+                    type="button"
+                    class="agent-query-send"
+                    inner_html=send_icon
+                    on:click=move |_| {
+                        let msg = input_value.get();
+                        set_input_value.set(String::new());
+                        send_message(msg);
+                    }
+                ></button>
+            </div>
+            </div>
             </div>
         </div>
     }
@@ -689,7 +979,7 @@ fn TopTradersPage() -> impl IntoView {
                         <p class="text-muted text-sm">"Loading…"</p>
                     }.into_view(),
                     Some(Err(e)) => view! {
-                        <p class="text-red-400 text-sm">"Error: " {e}</p>
+                        <p class="text-danger text-sm">"Error: " {e}</p>
                     }.into_view(),
                     Some(Ok(entries)) => {
                         if entries.is_empty() {
@@ -853,6 +1143,10 @@ pub fn App() -> impl IntoView {
 #[component]
 fn AppInner() -> impl IntoView {
     let (state, set_state) = create_signal::<Option<BotState>>(None);
+    let (agent_input_value, set_agent_input_value) = create_signal(String::new());
+    let (agent_messages, set_agent_messages) = create_signal::<Vec<AgentMessage>>(vec![]);
+    let (agent_loading, set_agent_loading) = create_signal(false);
+    let (agent_error, set_agent_error) = create_signal::<Option<String>>(None);
     let (selected_log_target, set_selected_log_target) = create_signal::<Option<String>>(None);
     let target_colors = create_rw_signal::<std::collections::HashMap<String, String>>(load_target_colors_from_storage());
     let theme = create_rw_signal::<String>(load_theme());
@@ -954,7 +1248,11 @@ fn AppInner() -> impl IntoView {
             .map(|s| s.ui.clone())
             .unwrap_or_default()
     };
-    let is_log_page = move || path() == "/logs";
+    let is_log_page = move || path().trim_end_matches('/') == "/logs";
+    let hide_header_pill_and_targets = move || {
+        let p = path().trim_end_matches('/').to_string();
+        p.is_empty() || p == "/" || p == "/agent" || p == "/toptraders" || p == "/portfolio"
+    };
     let no_aside: Option<()> = None;
 
     let menu_icon = "<svg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'><line x1='3' y1='6' x2='21' y2='6'/><line x1='3' y1='12' x2='21' y2='12'/><line x1='3' y1='18' x2='21' y2='18'/></svg>";
@@ -968,18 +1266,23 @@ fn AppInner() -> impl IntoView {
                 >
                     <span inner_html=menu_icon></span>
                 </button>
-                <span
-                    class=move || {
-                        if mode() == "Live" {
-                            "pill pill-live"
-                        } else {
-                            "pill pill-sim"
-                        }
-                    }
-                >
-                    {move || mode().as_str().to_string()}
-                </span>
                 {move || {
+                    if hide_header_pill_and_targets() {
+                        view! { <span></span> }.into_view()
+                    } else {
+                        view! {
+                            <span
+                                class=move || {
+                                    if mode() == "Live" {
+                                        "pill pill-live"
+                                    } else {
+                                        "pill pill-sim"
+                                    }
+                                }
+                            >
+                                {move || mode().as_str().to_string()}
+                            </span>
+                            {move || {
                     if is_log_page() {
                         let addrs = target_addresses();
                         let current = selected_log_target.get();
@@ -1021,11 +1324,15 @@ fn AppInner() -> impl IntoView {
                         }.into_view()
                     }
                 }}
+                        }.into_view()
+                    }
+                }}
             }
             main=view! {
                 {move || {
-                    let p = path();
-                    if p == "/logs" {
+                    let p = path().trim_end_matches('/').to_string();
+                    let is_logs = p == "/logs";
+                    if is_logs {
                         let _ = state_slice();
                         let logs_fn = move || state_slice().as_ref().map(|s| s.logs.clone()).unwrap_or_default();
                         let target_fn = move || selected_log_target.get();
@@ -1050,7 +1357,17 @@ fn AppInner() -> impl IntoView {
                     } else if p == "/agent" {
                         view! {
                             <div class="flex-1 min-h-0 flex flex-col overflow-hidden">
-                                <AgentPage/>
+                                <AgentPage
+                                    state=state_slice()
+                                    input_value=agent_input_value
+                                    set_input_value=set_agent_input_value
+                                    messages=agent_messages
+                                    set_messages=set_agent_messages
+                                    loading=agent_loading
+                                    set_loading=set_agent_loading
+                                    error=agent_error
+                                    set_error=set_agent_error
+                                />
                             </div>
                         }.into_view()
                     } else if p == "/portfolio" {

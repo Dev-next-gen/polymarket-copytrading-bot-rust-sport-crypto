@@ -10,7 +10,7 @@ use axum::{
     middleware::{self, Next},
     response::sse::{Event, KeepAlive, Sse},
     response::{Html, IntoResponse, Response},
-    routing::get,
+    routing::{get, post},
     Json, Router,
 };
 use clap::Parser;
@@ -20,7 +20,7 @@ use std::collections::HashMap;
 use std::convert::Infallible;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::{broadcast, oneshot, Mutex};
 use tower_http::services::ServeDir;
 use serde::Deserialize;
 use serde_json::Value;
@@ -60,6 +60,8 @@ struct AppState {
     web: SharedState,
     ui_dir: PathBuf,
     notify: NotifyTx,
+    /// Shared client for OpenRouter (connection reuse, pool); keeps agent chat fast.
+    openrouter_client: reqwest::Client,
 }
 
 async fn sse_state_updates(State(app): State<AppState>) -> Sse<impl futures_util::Stream<Item = Result<Event, Infallible>>> {
@@ -128,6 +130,110 @@ async fn api_leaderboard(
     Ok(axum::Json(body))
 }
 
+/// Request body for agent chat.
+#[derive(Debug, serde::Deserialize)]
+struct AgentChatRequest {
+    message: String,
+}
+
+/// Response body for agent chat.
+#[derive(Debug, serde::Serialize)]
+struct AgentChatResponse {
+    reply: String,
+}
+
+const OPENROUTER_URL: &str = "https://openrouter.ai/api/v1/chat/completions";
+/// Default model via OpenRouter (can override with OPENROUTER_MODEL env).
+const OPENROUTER_DEFAULT_MODEL: &str = "anthropic/claude-3.5-sonnet";
+
+/// Same method as Mahoraga (https://mahoraga.dev/): Monitor → Analyze. No Execute — research and guidance only.
+const OPENROUTER_SYSTEM_PROMPT: &str = r#"You are an autonomous analysis layer using the same method as Mahoraga (Monitor → Analyze). You do NOT Execute: no trades or buy/sell orders, only research and guidance.
+
+Mahoraga's flow: the agent monitors for signals, then each signal is researched by the LLM—analyzing sentiment, timing, catalysts, and red flags. You do that research step. When the user asks a substantive market or position question, treat their question as the "signal" and research it the same way.
+
+For those questions, when it adds clarity, structure your reply as a short research note (use **bold** for section headers):
+
+- **Signal** — One line on what the data or question implies (e.g. "BTC near overbought with sell-side pressure above spot" or "User asking about exposure to trending market").
+- **Research** — Your analysis: sentiment, timing, catalysts, red flags. Plain language, same style as Mahoraga's LLM research.
+- **Context for you** — How this ties to their positions (entry, PnL, exposure) and bias risk (FOMO, panic, chasing, averaging down).
+- **Confidence** — When relevant, give a single confidence or signal-strength note (e.g. "High confidence in holding" or "Medium — wait for confirmation"). Helps them weight your guidance.
+- **Guidance** — One clear takeaway (e.g. "holding is safer", "wait for confirmation"). Never "buy" or "sell"; only research and guidance.
+
+Flow: Monitor → Analyze → output (no Execute). For short or simple questions, answer naturally without forcing the structure. Adapt tone: beginners get less raw stats and more explanation; advanced users can get more technical."#;
+
+async fn api_agent_chat(
+    State(app): State<AppState>,
+    Json(body): Json<AgentChatRequest>,
+) -> Result<Json<AgentChatResponse>, (StatusCode, String)> {
+    let api_key = std::env::var("OPENROUTER_API_KEY")
+        .map_err(|_| (StatusCode::SERVICE_UNAVAILABLE, "OPENROUTER_API_KEY not set".to_string()))?;
+    if api_key.is_empty() {
+        return Err((StatusCode::SERVICE_UNAVAILABLE, "OPENROUTER_API_KEY is empty".to_string()));
+    }
+    let model = std::env::var("OPENROUTER_MODEL").unwrap_or_else(|_| OPENROUTER_DEFAULT_MODEL.to_string());
+    let max_tokens: u32 = std::env::var("OPENROUTER_MAX_TOKENS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(512)
+        .min(4096);
+    let client = app.openrouter_client.clone();
+    let message = body.message;
+    let (tx, rx) = oneshot::channel();
+    // Run OpenRouter I/O in a separate task so it doesn't block other handlers or copy-trading work.
+    tokio::spawn(async move {
+        let req_body = serde_json::json!({
+            "model": model,
+            "max_tokens": max_tokens,
+            "messages": [
+                {"role": "system", "content": OPENROUTER_SYSTEM_PROMPT},
+                {"role": "user", "content": message}
+            ]
+        });
+        let result = async {
+            let resp = client
+                .post(OPENROUTER_URL)
+                .header("Authorization", format!("Bearer {}", api_key))
+                .header("Content-Type", "application/json")
+                .header("HTTP-Referer", "https://github.com/frogansol/fastest-polymarket-copytrading-bot-sport-crypto")
+                .json(&req_body)
+                .send()
+                .await
+                .map_err(|e| (StatusCode::BAD_GATEWAY, format!("OpenRouter request failed: {}", e)))?;
+            let status = resp.status();
+            let text = resp
+                .text()
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            if !status.is_success() {
+                return Err((
+                    StatusCode::BAD_GATEWAY,
+                    format!("OpenRouter API error {}: {}", status, text),
+                ));
+            }
+            let json: serde_json::Value = serde_json::from_str(&text)
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("OpenRouter response parse: {}", e)))?;
+            let reply: String = json
+                .get("choices")
+                .and_then(|c| c.as_array())
+                .and_then(|a| a.first())
+                .and_then(|c| c.get("message"))
+                .and_then(|m| m.get("content"))
+                .and_then(|s| s.as_str())
+                .unwrap_or("")
+                .to_string();
+            Ok(AgentChatResponse { reply })
+        };
+        let _ = tx.send(result.await);
+    });
+    let response = rx.await.map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "OpenRouter task dropped".to_string(),
+        )
+    })?;
+    response.map(Json)
+}
+
 async fn api_state(State(app): State<AppState>) -> axum::response::Response {
     let state = web_state::get_state(app.web).await;
     let mut res = Json(state).into_response();
@@ -178,17 +284,25 @@ async fn static_asset_mime(req: Request<Body>, next: Next) -> Response {
 }
 
 fn spawn_web_server(state: SharedState, notify: NotifyTx, port: u16, ui_dir: PathBuf) {
+    let openrouter_client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(90))
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .pool_idle_timeout(std::time::Duration::from_secs(90))
+        .build()
+        .expect("reqwest OpenRouter client");
     tokio::spawn(async move {
         let app_state = AppState {
             web: state,
             ui_dir: ui_dir.clone(),
             notify,
+            openrouter_client,
         };
         let serve_dir = ServeDir::new(&ui_dir);
         let app = Router::new()
             .route("/api/state", get(api_state))
             .route("/api/state/stream", get(sse_state_updates))
             .route("/api/leaderboard", get(api_leaderboard))
+            .route("/api/agent/chat", post(api_agent_chat))
             .route("/", get(serve_index))
             .route("/logs", get(serve_index))
             .route("/settings", get(serve_index))
@@ -204,8 +318,11 @@ fn spawn_web_server(state: SharedState, notify: NotifyTx, port: u16, ui_dir: Pat
     });
 }
 
-#[tokio::main]
+/// More worker threads so agent/HTTP handlers are not starved by copy-trading and activity stream.
+#[tokio::main(flavor = "multi_thread", worker_threads = 8)]
 async fn main() -> Result<()> {
+    // Load .env so OPENROUTER_API_KEY is set for the agent page
+    dotenvy::dotenv().ok();
     env_logger::Builder::from_default_env()
         .filter_level(log::LevelFilter::Info)
         .init();

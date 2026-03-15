@@ -83,6 +83,8 @@ The bot subscribes to Polymarket’s **activity WebSocket** (`wss://ws-live-data
 
 Top-level: `clob_host`, `chain_id`, `port`, `simulation`.
 
+**Agent page (OpenRouter):** The Agent tab uses [OpenRouter](https://openrouter.ai/) so you can use one API key for many models. Set `OPENROUTER_API_KEY` in `.env` (or the environment); optional `OPENROUTER_MODEL` (default: `anthropic/claude-3.5-sonnet`). If the key is unset, the Agent chat returns a service-unavailable error. The chat uses the same method as [Mahoraga](https://mahoraga.dev/): **Monitor → Analyze** (no execution). Each question is treated as a signal; the LLM researches sentiment, timing, catalysts, and red flags, then returns a structured note (Signal, Research, Context, Confidence, Guidance).
+
 ---
 
 ## Running in production
