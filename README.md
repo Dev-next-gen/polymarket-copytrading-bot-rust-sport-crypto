@@ -25,8 +25,8 @@ Not a black box—you can read the code, change the config, and run it on your o
 ## Quick start
 
 ```bash
-git clone https://github.com/frogansol/fastest-polymarket-copytrading-bot-sport-crypto.git
-cd fastest-polymarket-copytrading-bot-sport-crypto
+git clone https://github.com/frogansol/fast-polymarket-copytrading-bot-rust.git
+cd fast-polymarket-copytrading-bot-rust
 ```
 
 Put **config.json** (CLOB URL, keys, wallet) and **trade.toml** (targets, multiplier, filters) in the project root. Example `trade.toml`:

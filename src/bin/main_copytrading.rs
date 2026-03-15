@@ -130,10 +130,50 @@ async fn api_leaderboard(
     Ok(axum::Json(body))
 }
 
+/// Provider entry for dropdown: only includes providers that have API key set in .env.
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentProvider {
+    id: String,
+    name: String,
+    default_model: String,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct AgentProvidersResponse {
+    providers: Vec<AgentProvider>,
+}
+
+async fn api_agent_providers() -> Json<AgentProvidersResponse> {
+    let mut providers = Vec::new();
+    if std::env::var("OPENROUTER_API_KEY").map(|k| !k.is_empty()).unwrap_or(false) {
+        providers.push(AgentProvider {
+            id: "openrouter".to_string(),
+            name: "OpenRouter".to_string(),
+            default_model: std::env::var("OPENROUTER_MODEL")
+                .unwrap_or_else(|_| "anthropic/claude-3.5-sonnet".to_string()),
+        });
+    }
+    if std::env::var("OPENAI_API_KEY").map(|k| !k.is_empty()).unwrap_or(false) {
+        providers.push(AgentProvider {
+            id: "openai".to_string(),
+            name: "OpenAI".to_string(),
+            default_model: std::env::var("OPENAI_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string()),
+        });
+    }
+    Json(AgentProvidersResponse { providers })
+}
+
 /// Request body for agent chat.
 #[derive(Debug, serde::Deserialize)]
 struct AgentChatRequest {
     message: String,
+    /// Provider id: "openrouter" | "openai". If missing, uses first available.
+    #[serde(default)]
+    provider: Option<String>,
+    /// Model override for that provider. If missing, uses provider default.
+    #[serde(default)]
+    model: Option<String>,
 }
 
 /// Response body for agent chat.
@@ -143,8 +183,9 @@ struct AgentChatResponse {
 }
 
 const OPENROUTER_URL: &str = "https://openrouter.ai/api/v1/chat/completions";
-/// Default model via OpenRouter (can override with OPENROUTER_MODEL env).
+const OPENAI_URL: &str = "https://api.openai.com/v1/chat/completions";
 const OPENROUTER_DEFAULT_MODEL: &str = "anthropic/claude-3.5-sonnet";
+const OPENAI_DEFAULT_MODEL: &str = "gpt-4o-mini";
 
 /// Same method as Mahoraga (https://mahoraga.dev/): Monitor → Analyze. No Execute — research and guidance only.
 const OPENROUTER_SYSTEM_PROMPT: &str = r#"You are an autonomous analysis layer using the same method as Mahoraga (Monitor → Analyze). You do NOT Execute: no trades or buy/sell orders, only research and guidance.
@@ -165,21 +206,54 @@ async fn api_agent_chat(
     State(app): State<AppState>,
     Json(body): Json<AgentChatRequest>,
 ) -> Result<Json<AgentChatResponse>, (StatusCode, String)> {
-    let api_key = std::env::var("OPENROUTER_API_KEY")
-        .map_err(|_| (StatusCode::SERVICE_UNAVAILABLE, "OPENROUTER_API_KEY not set".to_string()))?;
-    if api_key.is_empty() {
-        return Err((StatusCode::SERVICE_UNAVAILABLE, "OPENROUTER_API_KEY is empty".to_string()));
-    }
-    let model = std::env::var("OPENROUTER_MODEL").unwrap_or_else(|_| OPENROUTER_DEFAULT_MODEL.to_string());
+    let has_openrouter = std::env::var("OPENROUTER_API_KEY").map(|k| !k.is_empty()).unwrap_or(false);
+    let has_openai = std::env::var("OPENAI_API_KEY").map(|k| !k.is_empty()).unwrap_or(false);
+    let provider_id = body.provider.as_deref().unwrap_or_else(|| {
+        if has_openrouter {
+            "openrouter"
+        } else if has_openai {
+            "openai"
+        } else {
+            ""
+        }
+    });
+    let (url, api_key, model) = match provider_id {
+        "openrouter" if has_openrouter => {
+            let key = std::env::var("OPENROUTER_API_KEY").map_err(|_| {
+                (StatusCode::SERVICE_UNAVAILABLE, "OPENROUTER_API_KEY not set".to_string())
+            })?;
+            let model = body.model.clone().unwrap_or_else(|| {
+                std::env::var("OPENROUTER_MODEL").unwrap_or_else(|_| OPENROUTER_DEFAULT_MODEL.to_string())
+            });
+            (OPENROUTER_URL, key, model)
+        }
+        "openai" if has_openai => {
+            let key = std::env::var("OPENAI_API_KEY").map_err(|_| {
+                (StatusCode::SERVICE_UNAVAILABLE, "OPENAI_API_KEY not set".to_string())
+            })?;
+            let model = body.model.clone().unwrap_or_else(|| {
+                std::env::var("OPENAI_MODEL").unwrap_or_else(|_| OPENAI_DEFAULT_MODEL.to_string())
+            });
+            (OPENAI_URL, key, model)
+        }
+        _ => {
+            return Err((
+                StatusCode::SERVICE_UNAVAILABLE,
+                "No provider with API key. Set OPENROUTER_API_KEY or OPENAI_API_KEY in .env".to_string(),
+            ));
+        }
+    };
     let max_tokens: u32 = std::env::var("OPENROUTER_MAX_TOKENS")
+        .or_else(|_| std::env::var("OPENAI_MAX_TOKENS"))
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(512)
         .min(4096);
     let client = app.openrouter_client.clone();
     let message = body.message;
+    let url_s = url.to_string();
+    let is_openrouter = url == OPENROUTER_URL;
     let (tx, rx) = oneshot::channel();
-    // Run OpenRouter I/O in a separate task so it doesn't block other handlers or copy-trading work.
     tokio::spawn(async move {
         let req_body = serde_json::json!({
             "model": model,
@@ -190,15 +264,18 @@ async fn api_agent_chat(
             ]
         });
         let result = async {
-            let resp = client
-                .post(OPENROUTER_URL)
+            let mut req = client
+                .post(url_s.as_str())
                 .header("Authorization", format!("Bearer {}", api_key))
                 .header("Content-Type", "application/json")
-                .header("HTTP-Referer", "https://github.com/frogansol/fastest-polymarket-copytrading-bot-sport-crypto")
-                .json(&req_body)
+                .json(&req_body);
+            if is_openrouter {
+                req = req.header("HTTP-Referer", "https://github.com/frogansol/fast-polymarket-copytrading-bot-rust");
+            }
+            let resp = req
                 .send()
                 .await
-                .map_err(|e| (StatusCode::BAD_GATEWAY, format!("OpenRouter request failed: {}", e)))?;
+                .map_err(|e| (StatusCode::BAD_GATEWAY, format!("LLM request failed: {}", e)))?;
             let status = resp.status();
             let text = resp
                 .text()
@@ -207,11 +284,11 @@ async fn api_agent_chat(
             if !status.is_success() {
                 return Err((
                     StatusCode::BAD_GATEWAY,
-                    format!("OpenRouter API error {}: {}", status, text),
+                    format!("LLM API error {}: {}", status, text),
                 ));
             }
             let json: serde_json::Value = serde_json::from_str(&text)
-                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("OpenRouter response parse: {}", e)))?;
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("LLM response parse: {}", e)))?;
             let reply: String = json
                 .get("choices")
                 .and_then(|c| c.as_array())
@@ -228,7 +305,7 @@ async fn api_agent_chat(
     let response = rx.await.map_err(|_| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            "OpenRouter task dropped".to_string(),
+            "Agent task dropped".to_string(),
         )
     })?;
     response.map(Json)
@@ -302,6 +379,7 @@ fn spawn_web_server(state: SharedState, notify: NotifyTx, port: u16, ui_dir: Pat
             .route("/api/state", get(api_state))
             .route("/api/state/stream", get(sse_state_updates))
             .route("/api/leaderboard", get(api_leaderboard))
+            .route("/api/agent/providers", get(api_agent_providers))
             .route("/api/agent/chat", post(api_agent_chat))
             .route("/", get(serve_index))
             .route("/logs", get(serve_index))

@@ -478,13 +478,44 @@ fn markdown_to_safe_html(s: &str) -> String {
     out
 }
 
-async fn agent_chat_request(message: String) -> Result<String, String> {
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentProviderInfo {
+    id: String,
+    name: String,
+    default_model: String,
+}
+
+async fn fetch_agent_providers() -> Result<Vec<AgentProviderInfo>, String> {
+    #[derive(serde::Deserialize)]
+    struct Response {
+        providers: Vec<AgentProviderInfo>,
+    }
+    let resp = gloo_net::http::Request::get("/api/agent/providers")
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.ok() {
+        return Err(resp.status().to_string());
+    }
+    let out: Response = resp.json().await.map_err(|e| e.to_string())?;
+    Ok(out.providers)
+}
+
+async fn agent_chat_request(message: String, provider: Option<String>, model: Option<String>) -> Result<String, String> {
     #[derive(serde::Deserialize)]
     struct Response {
         reply: String,
     }
+    let mut body = serde_json::json!({ "message": message });
+    if let Some(p) = provider {
+        body["provider"] = serde_json::json!(p);
+    }
+    if let Some(m) = model {
+        body["model"] = serde_json::json!(m);
+    }
     let resp = gloo_net::http::Request::post("/api/agent/chat")
-        .json(&serde_json::json!({ "message": message }))
+        .json(&body)
         .map_err(|e| e.to_string())?
         .send()
         .await
@@ -509,18 +540,34 @@ fn AgentPage(
     error: ReadSignal<Option<String>>,
     set_error: WriteSignal<Option<String>>,
 ) -> impl IntoView {
+    let (providers, set_providers) = create_signal::<Vec<AgentProviderInfo>>(vec![]);
+    let (selected_provider_id, set_selected_provider_id) = create_signal::<String>(String::new());
+    let dropdown_open = create_rw_signal(false);
+    create_effect(move |_| {
+        spawn_local(async move {
+            if let Ok(list) = fetch_agent_providers().await {
+                set_providers.set(list.clone());
+                if selected_provider_id.get().is_empty() && !list.is_empty() {
+                    set_selected_provider_id.set(list[0].id.clone());
+                }
+            }
+        });
+    });
     let send_message = move |msg: String| {
         let msg = msg.trim().to_string();
         if msg.is_empty() {
             return;
         }
+        let provider = selected_provider_id.get();
+        let provider_opt = if provider.is_empty() { None } else { Some(provider) };
         set_error.set(None);
         set_messages.update(|v| v.push(AgentMessage { role: "user".to_string(), content: msg.clone() }));
         set_loading.set(true);
         spawn_local(async move {
-            match agent_chat_request(msg).await {
-                Ok(reply) => {
-                    set_messages.update(|v| v.push(AgentMessage { role: "assistant".to_string(), content: reply }));
+            let reply = agent_chat_request(msg, provider_opt, None).await;
+            match reply {
+                Ok(r) => {
+                    set_messages.update(|v| v.push(AgentMessage { role: "assistant".to_string(), content: r }));
                 }
                 Err(e) => {
                     set_error.set(Some(e));
@@ -546,7 +593,7 @@ fn AgentPage(
     let send_icon = "<svg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'><line x1='22' y1='2' x2='11' y2='13'/><polygon points='22 2 15 22 11 13 2 9 22 2'/></svg>";
     let user_icon = "<svg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'><path d='M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2'/><circle cx='12' cy='7' r='4'/></svg>";
 
-    const AGENT_NAME: &str = "ghul";
+    const AGENT_NAME: &str = "fastpct";
     let welcome_text = if has_positions {
         "I'm your analysis layer — Mahoraga-style: Monitor and Analyze only, no execution. Connect in Portfolio and I'll pre-load your positions, then research every question (signals, sentiment, catalysts, red flags) and give you clear guidance. Try \"Full analysis of my book\" or \"Analyze my positions\"."
     } else {
@@ -591,10 +638,55 @@ fn AgentPage(
                 <div class="agent-chat-scroll p-4 flex flex-col">
             <div class="agent-header">
                 <span class="agent-name">{AGENT_NAME}</span>
-                <button type="button" class="agent-version-btn">
-                    <span>{format!("{} 1.0.0v", AGENT_NAME)}</span>
-                    <span inner_html=chevron_down></span>
-                </button>
+                <div class="agent-dropdown-wrap">
+                    <button type="button" class="agent-version-btn" on:click=move |_| dropdown_open.update(|o| *o = !*o)>
+                        <span>
+                            {move || {
+                                let list = providers.get();
+                                let sid = selected_provider_id.get();
+                                if sid.is_empty() || list.is_empty() {
+                                    format!("{} 1.0.0v", AGENT_NAME)
+                                } else {
+                                    list.iter().find(|p| p.id == sid).map(|p| format!("{} · {}", p.name, p.default_model)).unwrap_or_else(|| format!("{} 1.0.0v", AGENT_NAME))
+                                }
+                            }}
+                        </span>
+                        <span inner_html=chevron_down></span>
+                    </button>
+                    {move || dropdown_open.get().then(|| {
+                        let set_selected = set_selected_provider_id.clone();
+                        view! {
+                            <div class="agent-dropdown-backdrop" on:click=move |_| dropdown_open.set(false)></div>
+                            <div class="agent-dropdown-panel">
+                                <div class="agent-dropdown-section">"LATEST"</div>
+                                {move || {
+                                    let list = providers.get();
+                                    let sid = selected_provider_id.get();
+                                    if list.is_empty() {
+                                        view! { <div class="agent-dropdown-item agent-dropdown-item-muted">"No API keys in .env"</div> }.into_view()
+                                    } else {
+                                        list.into_iter().map(|p| {
+                                            let id = p.id.clone();
+                                            let name = p.name.clone();
+                                            let default_model = p.default_model.clone();
+                                            let is_selected = sid == id;
+                                            let set_selected = set_selected.clone();
+                                            view! {
+                                                <button type="button" class="agent-dropdown-item" on:click=move |_| {
+                                                    set_selected.set(id.clone());
+                                                    dropdown_open.set(false);
+                                                }>
+                                                    {if is_selected { view! { <span class="agent-dropdown-check">"✓"</span> }.into_view() } else { view! { <span class="agent-dropdown-check"></span> }.into_view() }}
+                                                    <span class="agent-dropdown-item-label">{format!("{} · {}", name, default_model)}</span>
+                                                </button>
+                                            }
+                                        }).collect_view().into_view()
+                                    }
+                                }}
+                            </div>
+                        }
+                    })}
+                </div>
                 <span class="agent-tagline">"Autonomous Market Intelligence"</span>
                 <span class="agent-status">
                     <span class="agent-status-dot"></span>
@@ -602,7 +694,7 @@ fn AgentPage(
                 </span>
             </div>
             <div class="agent-message-card">
-                <div class="agent-avatar agent-avatar-ghul">{AGENT_NAME}</div>
+                <div class="agent-avatar agent-avatar-fastpct">{AGENT_NAME}</div>
                 <div class="agent-message-body">
                     <p class="agent-message-label">{AGENT_NAME}</p>
                     <p class="agent-message-text">
@@ -625,7 +717,7 @@ fn AgentPage(
                         view! {
                             <div class=if is_user { "agent-message-card agent-message-user" } else { "agent-message-card agent-message-assistant" }>
                                 {if !is_user {
-                                    view! { <div class="agent-avatar agent-avatar-ghul">{AGENT_NAME}</div> }.into_view()
+                                    view! { <div class="agent-avatar agent-avatar-fastpct">{AGENT_NAME}</div> }.into_view()
                                 } else {
                                     view! { <div class="agent-avatar agent-avatar-user" inner_html=user_icon></div> }.into_view()
                                 }}
@@ -676,8 +768,18 @@ fn AgentPage(
                         }
                     }
                 />
-                <button type="button" class="agent-query-send">
-                    <span>{format!("{} 1.0.0v", AGENT_NAME)}</span>
+                <button type="button" class="agent-query-send" on:click=move |_| dropdown_open.update(|o| *o = !*o)>
+                    <span>
+                        {move || {
+                            let list = providers.get();
+                            let sid = selected_provider_id.get();
+                            if sid.is_empty() || list.is_empty() {
+                                format!("{} 1.0.0v", AGENT_NAME)
+                            } else {
+                                list.iter().find(|p| p.id == sid).map(|p| p.name.clone()).unwrap_or_else(|| format!("{} 1.0.0v", AGENT_NAME))
+                            }
+                        }}
+                    </span>
                     <span inner_html=chevron_down></span>
                 </button>
                 <button
