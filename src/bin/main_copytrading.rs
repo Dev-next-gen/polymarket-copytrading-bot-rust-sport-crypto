@@ -24,8 +24,8 @@ use tokio::sync::{broadcast, oneshot, Mutex};
 use tower_http::services::ServeDir;
 use serde::Deserialize;
 use serde_json::Value;
-
 use polymarket_trading_bot::activity_stream;
+use polymarket_trading_bot::clob_sdk;
 use polymarket_trading_bot::api::PolymarketApi;
 use polymarket_trading_bot::config::Config;
 use polymarket_trading_bot::copy_trading::{spawn_exit_loop, CopyTradingConfig};
@@ -144,6 +144,11 @@ struct AgentProvidersResponse {
     providers: Vec<AgentProvider>,
 }
 
+fn polygon() -> u64 {
+    clob_sdk::polygon()
+}
+
+
 async fn api_agent_providers() -> Json<AgentProvidersResponse> {
     let mut providers = Vec::new();
     if std::env::var("OPENROUTER_API_KEY").map(|k| !k.is_empty()).unwrap_or(false) {
@@ -161,6 +166,13 @@ async fn api_agent_providers() -> Json<AgentProvidersResponse> {
             default_model: std::env::var("OPENAI_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string()),
         });
     }
+    if std::env::var("ANTHROPIC_API_KEY").map(|k| !k.is_empty()).unwrap_or(false) {
+        providers.push(AgentProvider {
+            id: "claude".to_string(),
+            name: "Claude.ai".to_string(),
+            default_model: std::env::var("ANTHROPIC_MODEL").unwrap_or_else(|_| "claude-3-5-sonnet-20241022".to_string()),
+        });
+    }
     Json(AgentProvidersResponse { providers })
 }
 
@@ -168,7 +180,7 @@ async fn api_agent_providers() -> Json<AgentProvidersResponse> {
 #[derive(Debug, serde::Deserialize)]
 struct AgentChatRequest {
     message: String,
-    /// Provider id: "openrouter" | "openai". If missing, uses first available.
+    /// Provider id: "openrouter" | "openai" | "claude". If missing, uses first available.
     #[serde(default)]
     provider: Option<String>,
     /// Model override for that provider. If missing, uses provider default.
@@ -184,8 +196,44 @@ struct AgentChatResponse {
 
 const OPENROUTER_URL: &str = "https://openrouter.ai/api/v1/chat/completions";
 const OPENAI_URL: &str = "https://api.openai.com/v1/chat/completions";
+const ANTHROPIC_URL: &str = "https://api.anthropic.com/v1/messages";
 const OPENROUTER_DEFAULT_MODEL: &str = "anthropic/claude-3.5-sonnet";
 const OPENAI_DEFAULT_MODEL: &str = "gpt-4o-mini";
+const ANTHROPIC_DEFAULT_MODEL: &str = "claude-3-5-sonnet-20241022";
+
+/// Build a short, user-friendly error message for LLM API failures (e.g. 429 quota).
+fn parse_llm_error_message(status: u16, body: &str) -> String {
+    let json: Option<serde_json::Value> = serde_json::from_str(body).ok();
+    let error_msg = json
+        .as_ref()
+        .and_then(|j| j.get("error"))
+        .and_then(|e| e.get("message"))
+        .and_then(|m| m.as_str());
+    let code = json
+        .as_ref()
+        .and_then(|j| j.get("error"))
+        .and_then(|e| e.get("code"))
+        .and_then(|c| c.as_str());
+    if status == 429 {
+        let code_display = code.unwrap_or("unknown");
+        if code == Some("rate_limit_exceeded") {
+            return "Rate limit hit — too many requests. Wait 30–60 seconds and try again, or use another provider in the dropdown.".to_string();
+        }
+        if code == Some("insufficient_quota") || error_msg.map(|m| m.contains("quota")).unwrap_or(false) {
+            return format!(
+                "OpenAI returned \"{}\". Even with a paid key, check: (1) Usage & billing at https://platform.openai.com/usage — ensure you have remaining usage; (2) The key in .env is for the correct org and not revoked; (3) Try another provider in the dropdown.",
+                code_display
+            );
+        }
+        return format!("Too many requests ({}). Wait a moment or try another provider in the dropdown.", code_display);
+    }
+    if let Some(m) = error_msg {
+        let trimmed = if m.len() > 280 { format!("{}…", &m[..277]) } else { m.to_string() };
+        return format!("LLM API error {}: {}", status, trimmed);
+    }
+    let trimmed = if body.len() > 280 { format!("{}…", &body[..277]) } else { body.to_string() };
+    format!("LLM API error {}: {}", status, trimmed)
+}
 
 /// Same method as Mahoraga (https://mahoraga.dev/): Monitor → Analyze. No Execute — research and guidance only.
 const OPENROUTER_SYSTEM_PROMPT: &str = r#"You are an autonomous analysis layer using the same method as Mahoraga (Monitor → Analyze). You do NOT Execute: no trades or buy/sell orders, only research and guidance.
@@ -208,16 +256,25 @@ async fn api_agent_chat(
 ) -> Result<Json<AgentChatResponse>, (StatusCode, String)> {
     let has_openrouter = std::env::var("OPENROUTER_API_KEY").map(|k| !k.is_empty()).unwrap_or(false);
     let has_openai = std::env::var("OPENAI_API_KEY").map(|k| !k.is_empty()).unwrap_or(false);
+    let has_anthropic = std::env::var("ANTHROPIC_API_KEY").map(|k| !k.is_empty()).unwrap_or(false);
     let provider_id = body.provider.as_deref().unwrap_or_else(|| {
         if has_openrouter {
             "openrouter"
         } else if has_openai {
             "openai"
+        } else if has_anthropic {
+            "claude"
         } else {
             ""
         }
     });
-    let (url, api_key, model) = match provider_id {
+    #[derive(Clone, Copy)]
+    enum ProviderKind {
+        OpenRouter,
+        OpenAI,
+        Anthropic,
+    }
+    let (url, api_key, model, provider_kind) = match provider_id {
         "openrouter" if has_openrouter => {
             let key = std::env::var("OPENROUTER_API_KEY").map_err(|_| {
                 (StatusCode::SERVICE_UNAVAILABLE, "OPENROUTER_API_KEY not set".to_string())
@@ -225,7 +282,7 @@ async fn api_agent_chat(
             let model = body.model.clone().unwrap_or_else(|| {
                 std::env::var("OPENROUTER_MODEL").unwrap_or_else(|_| OPENROUTER_DEFAULT_MODEL.to_string())
             });
-            (OPENROUTER_URL, key, model)
+            (OPENROUTER_URL, key, model, ProviderKind::OpenRouter)
         }
         "openai" if has_openai => {
             let key = std::env::var("OPENAI_API_KEY").map_err(|_| {
@@ -234,17 +291,27 @@ async fn api_agent_chat(
             let model = body.model.clone().unwrap_or_else(|| {
                 std::env::var("OPENAI_MODEL").unwrap_or_else(|_| OPENAI_DEFAULT_MODEL.to_string())
             });
-            (OPENAI_URL, key, model)
+            (OPENAI_URL, key, model, ProviderKind::OpenAI)
+        }
+        "claude" if has_anthropic => {
+            let key = std::env::var("ANTHROPIC_API_KEY").map_err(|_| {
+                (StatusCode::SERVICE_UNAVAILABLE, "ANTHROPIC_API_KEY not set".to_string())
+            })?;
+            let model = body.model.clone().unwrap_or_else(|| {
+                std::env::var("ANTHROPIC_MODEL").unwrap_or_else(|_| ANTHROPIC_DEFAULT_MODEL.to_string())
+            });
+            (ANTHROPIC_URL, key, model, ProviderKind::Anthropic)
         }
         _ => {
             return Err((
                 StatusCode::SERVICE_UNAVAILABLE,
-                "No provider with API key. Set OPENROUTER_API_KEY or OPENAI_API_KEY in .env".to_string(),
+                "No provider with API key. Set OPENROUTER_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY in .env".to_string(),
             ));
         }
     };
     let max_tokens: u32 = std::env::var("OPENROUTER_MAX_TOKENS")
         .or_else(|_| std::env::var("OPENAI_MAX_TOKENS"))
+        .or_else(|_| std::env::var("ANTHROPIC_MAX_TOKENS"))
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(512)
@@ -252,26 +319,44 @@ async fn api_agent_chat(
     let client = app.openrouter_client.clone();
     let message = body.message;
     let url_s = url.to_string();
-    let is_openrouter = url == OPENROUTER_URL;
     let (tx, rx) = oneshot::channel();
     tokio::spawn(async move {
-        let req_body = serde_json::json!({
-            "model": model,
-            "max_tokens": max_tokens,
-            "messages": [
-                {"role": "system", "content": OPENROUTER_SYSTEM_PROMPT},
-                {"role": "user", "content": message}
-            ]
-        });
-        let result = async {
-            let mut req = client
-                .post(url_s.as_str())
-                .header("Authorization", format!("Bearer {}", api_key))
-                .header("Content-Type", "application/json")
-                .json(&req_body);
-            if is_openrouter {
-                req = req.header("HTTP-Referer", "https://github.com/frogansol/fast-polymarket-copytrading-bot-rust");
+        let req_body = match provider_kind {
+            ProviderKind::OpenRouter | ProviderKind::OpenAI => serde_json::json!({
+                "model": model,
+                "max_tokens": max_tokens,
+                "messages": [
+                    {"role": "system", "content": OPENROUTER_SYSTEM_PROMPT},
+                    {"role": "user", "content": message}
+                ]
+            }),
+            ProviderKind::Anthropic => serde_json::json!({
+                "model": model,
+                "max_tokens": max_tokens,
+                "system": OPENROUTER_SYSTEM_PROMPT,
+                "messages": [{"role": "user", "content": message}]
+            }),
+        };
+        let mut req = client
+            .post(url_s.as_str())
+            .header("Content-Type", "application/json")
+            .json(&req_body);
+        match provider_kind {
+            ProviderKind::OpenRouter => {
+                req = req
+                    .header("Authorization", format!("Bearer {}", api_key))
+                    .header("HTTP-Referer", "https://github.com/frogansol/fast-polymarket-copytrading-bot-rust");
             }
+            ProviderKind::OpenAI => {
+                req = req.header("Authorization", format!("Bearer {}", api_key));
+            }
+            ProviderKind::Anthropic => {
+                req = req
+                    .header("x-api-key", api_key.as_str())
+                    .header("anthropic-version", "2023-06-01");
+            }
+        }
+        let result = async {
             let resp = req
                 .send()
                 .await
@@ -282,22 +367,30 @@ async fn api_agent_chat(
                 .await
                 .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
             if !status.is_success() {
-                return Err((
-                    StatusCode::BAD_GATEWAY,
-                    format!("LLM API error {}: {}", status, text),
-                ));
+                let msg = parse_llm_error_message(status.as_u16(), &text);
+                return Err((StatusCode::BAD_GATEWAY, msg));
             }
             let json: serde_json::Value = serde_json::from_str(&text)
                 .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("LLM response parse: {}", e)))?;
-            let reply: String = json
-                .get("choices")
-                .and_then(|c| c.as_array())
-                .and_then(|a| a.first())
-                .and_then(|c| c.get("message"))
-                .and_then(|m| m.get("content"))
-                .and_then(|s| s.as_str())
-                .unwrap_or("")
-                .to_string();
+            let reply = match provider_kind {
+                ProviderKind::OpenRouter | ProviderKind::OpenAI => json
+                    .get("choices")
+                    .and_then(|c| c.as_array())
+                    .and_then(|a| a.first())
+                    .and_then(|c| c.get("message"))
+                    .and_then(|m| m.get("content"))
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                ProviderKind::Anthropic => json
+                    .get("content")
+                    .and_then(|c| c.as_array())
+                    .and_then(|a| a.first())
+                    .and_then(|b| b.get("text"))
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+            };
             Ok(AgentChatResponse { reply })
         };
         let _ = tx.send(result.await);
@@ -408,6 +501,11 @@ async fn main() -> Result<()> {
     let args = CopyArgs::parse();
     let config = Config::load(&args.config)?;
 
+    // Load CLOB SDK .so (lib/lib.so or lib/lib.so) same as c-polymarket-sports-trading-bot.
+    // Fail here with a clear error if the library is missing.
+    clob_sdk::ensure_loaded().context("Load CLOB SDK before starting (place lib.so in ./lib/)")?;
+    let chain_id = polygon();
+    let path = clob_sdk::loaded_path().unwrap_or("(unknown)");
     let trade_path = if args.trade_config.is_absolute() {
         args.trade_config.clone()
     } else {
@@ -443,9 +541,9 @@ async fn main() -> Result<()> {
         config.polymarket.signature_type,
     ));
 
-    if !simulation {
+    // if !simulation {
         api.authenticate().await.context("Polymarket authenticate")?;
-    }
+    // }
 
     let wallet = if simulation {
         "simulation".to_string()
@@ -522,10 +620,12 @@ async fn main() -> Result<()> {
         simulation,
     );
 
-    // Positions UI poll only: refresh live positions for dashboard; no copy from positions.
+    // Positions UI poll: fetch for .env wallet (config) and for each copy target.
+    let mut users_to_fetch: Vec<String> = vec![wallet.clone()];
+    users_to_fetch.extend(targets.iter().cloned());
     let mut initial_done: std::collections::HashSet<String> = std::collections::HashSet::new();
     loop {
-        let fetch_futures: Vec<_> = targets
+        let fetch_futures: Vec<_> = users_to_fetch
             .iter()
             .map(|user| {
                 let user_lower = user.to_lowercase();

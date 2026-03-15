@@ -543,13 +543,24 @@ fn AgentPage(
     let (providers, set_providers) = create_signal::<Vec<AgentProviderInfo>>(vec![]);
     let (selected_provider_id, set_selected_provider_id) = create_signal::<String>(String::new());
     let dropdown_open = create_rw_signal(false);
+    // Fetch providers once on mount. Do not read selected_provider_id inside the effect
+    // or Leptos will re-run the effect when selection changes, causing repeated fetches
+    // and the dropdown label to keep changing.
+    let providers_fetched = create_rw_signal(false);
     create_effect(move |_| {
+        if providers_fetched.get() {
+            return;
+        }
+        let set_providers = set_providers.clone();
+        let set_selected = set_selected_provider_id.clone();
+        let set_fetched = providers_fetched.clone();
         spawn_local(async move {
             if let Ok(list) = fetch_agent_providers().await {
                 set_providers.set(list.clone());
-                if selected_provider_id.get().is_empty() && !list.is_empty() {
-                    set_selected_provider_id.set(list[0].id.clone());
+                if !list.is_empty() {
+                    set_selected.set(list[0].id.clone());
                 }
+                set_fetched.set(true);
             }
         });
     });
@@ -801,27 +812,38 @@ fn AgentPage(
 
 #[component]
 fn PortfolioPage(state: Option<BotState>) -> impl IntoView {
-    let positions = state
+    // Show total value and open positions for the .env wallet (config wallet) only.
+    let my_wallet_key = state.as_ref().and_then(|s| s.status.wallet.as_ref()).map(|w| w.to_lowercase());
+    let my_positions = state
         .as_ref()
-        .map(|s| s.positions.clone())
+        .and_then(|s| my_wallet_key.as_ref().and_then(|k| s.positions.get(k).cloned()))
         .unwrap_or_default();
-    let flat: Vec<_> = positions
-        .into_iter()
-        .flat_map(|(slug, list)| list.into_iter().map(move |p| (slug.clone(), p)))
-        .collect();
-    let total_value = flat.iter().fold(0.0_f64, |acc, (_, p)| acc + p.size * p.cur_price);
+    let total_value = my_positions.iter().fold(0.0_f64, |acc, p| acc + p.size * p.cur_price);
+    let wallet_label = state
+        .as_ref()
+        .and_then(|s| s.status.wallet.as_ref())
+        .map(|w| {
+            if w.len() > 16 {
+                format!("{}…{}", &w[..8], &w[w.len() - 6..])
+            } else {
+                w.clone()
+            }
+        })
+        .unwrap_or_else(|| "—".to_string());
     view! {
         <div class="flex-1 overflow-auto p-4">
             <h1 class="page-title">"Portfolio"</h1>
-            <p class="page-desc mb-4">"Positions and allocation."</p>
+            <p class="page-desc mb-4">"Total value and open positions for your wallet (.env / config)."</p>
             <div class="grid gap-3 md:grid-cols-3 mb-6">
                 <div class="card p-4">
                     <span class="section-label">"TOTAL VALUE"</span>
                     <p class="text-xl font-semibold tabular-nums">{format!("${:.2}", total_value)}</p>
+                    <p class="text-muted text-xs mt-1">"Your wallet (" {wallet_label.clone()} ")"</p>
                 </div>
                 <div class="card p-4">
                     <span class="section-label">"OPEN POSITIONS"</span>
-                    <p class="text-xl font-semibold tabular-nums">{flat.len()}</p>
+                    <p class="text-xl font-semibold tabular-nums">{my_positions.len()}</p>
+                    <p class="text-muted text-xs mt-1">"Your wallet (" {wallet_label} ")"</p>
                 </div>
                 <div class="card p-4">
                     <span class="section-label">"AVAILABLE"</span>
@@ -829,20 +851,20 @@ fn PortfolioPage(state: Option<BotState>) -> impl IntoView {
                 </div>
             </div>
             <div class="card p-4">
-                <span class="section-label">"ACTIVE POSITIONS"</span>
-                {if flat.is_empty() {
+                <span class="section-label">"ACTIVE TRADES"</span>
+                {if my_positions.is_empty() {
                     view! {
-                        <p class="text-muted text-sm py-4">"No open positions — Open your first position to start trading."</p>
+                        <p class="text-muted text-sm py-4">"No open positions for your wallet. Copy trades or open positions to see them here."</p>
                     }.into_view()
                 } else {
                     view! {
                         <ul class="divide-y divide-border mt-2">
-                            {flat
+                            {my_positions
                                 .into_iter()
-                                .map(|(slug, p)| {
+                                .map(|p| {
                                     view! {
-                                        <li class="py-2 flex justify-between items-center gap-2">
-                                            <span class="font-mono text-sm">{slug}</span>
+                                        <li class="py-2 flex justify-between items-center gap-2 flex-wrap">
+                                            <span class="font-mono text-sm">{p.slug}</span>
                                             <span class="text-muted text-sm">{p.outcome}</span>
                                             <span class="tabular-nums">{format!("{:.4}", p.size)} " @ " {format!("{:.4}", p.cur_price)}</span>
                                         </li>
@@ -959,7 +981,7 @@ fn SettingsPage(
                     <span class="text-xs tabular-nums">{targets}</span>
                 </div>
                 <div class="card p-3 flex flex-col gap-2">
-                    <span class="text-sm text-muted">"Target address · color (for Log page)"</span>
+                    <span class="text-sm text-muted">"Target address · color (for Logs page)"</span>
                     {if addresses.is_empty() {
                         view! { <span class="text-xs text-dim">"—"</span> }.into_view()
                     } else {

@@ -18,6 +18,8 @@ pub struct ContractConfig {
 }
 
 static LIB: OnceLock<Result<Library, libloading::Error>> = OnceLock::new();
+/// Path we loaded the .so from (set on first successful load). Use to confirm the SDK is loaded.
+static LOADED_PATH: OnceLock<String> = OnceLock::new();
 
 fn load_lib() -> Result<&'static Library> {
     let path = std::env::var("LIBCOB_SDK_SO")
@@ -29,21 +31,38 @@ fn load_lib() -> Result<&'static Library> {
                 "lib/lib.so",
                 "src/lib/lib.so",
             ];
-            candidates
+            #[cfg(not(target_os = "windows"))]
+            let found = candidates
                 .into_iter()
                 .find(|p| std::path::Path::new(p).exists())
-                .map(String::from)
+                .map(String::from);
+            #[cfg(target_os = "windows")]
+            let found = None;
+            found
         })
         .context(
-            "CLOB SDK .so not found. Set LIBCOB_SDK_SO to the path of lib.so (or .dylib/.dll), \
-             or place it in ./lib/ or current directory, or run from the bot dir when the SDK is at \
-             ../polymarket-clob-sdk. Build: cd polymarket-clob-sdk && cargo build --release --features clob",
+            "CLOB SDK .so not found. Set LIBCOB_SDK_SO to the path of lib.so (or lib.so), \
+             or place lib.so in ./lib/ (same as c-polymarket-sports-trading-bot). \
+             Build: cd polymarket-clob-sdk && cargo build --release --features clob",
         )?;
     let lib = LIB
         .get_or_init(|| unsafe { Library::new(&path) })
         .as_ref()
         .map_err(|e| anyhow::anyhow!("Failed to load CLOB SDK library {}: {}", path, e))?;
+    let _ = LOADED_PATH.set(path.clone());
     Ok(lib)
+}
+
+/// Load the CLOB SDK .so at startup. Call this (e.g. from main) to fail fast with a clear error
+/// if the library is missing, instead of failing later when creating the client.
+pub fn ensure_loaded() -> Result<()> {
+    load_lib().map(|_| ())
+}
+
+/// Path the CLOB SDK was loaded from, if it has been loaded. Use to confirm the .so is loaded
+/// (e.g. "lib/lib.so"); if this returns None, only the fallback chain ID 137 was used.
+pub fn loaded_path() -> Option<&'static str> {
+    LOADED_PATH.get().map(String::as_str)
 }
 
 /// Polygon mainnet chain ID (137). From the loaded .so.
