@@ -1,4 +1,4 @@
-# Polymarket copy-trading bot
+# Polymarket CopyTrading Bot Kit in Rust
 
 Copy trades from one or more leaders on Polymarket with a size multiplier, optional take-profit/stop-loss, and a web UI for logs and positions. Real-time WebSocket for all targets (filtered client-side). Built in Rust.
 
@@ -8,9 +8,9 @@ Copy trades from one or more leaders on Polymarket with a size multiplier, optio
 
 By [FemtoTrader](https://t.me/femtotrader).
 
-Most Polymarket copy bots are slow, brittle, or hard to trust. This one is built for speed and clarity: Rust, async I/O, and the same activity WebSocket the official tooling uses when you follow a single address. You get instant trade flow for one leader, or parallel position checks for several, plus a small dashboard so you can see what’s happening without digging through logs.
+The goal is a **convenient, fast interface** to copy-trade Polymarket without living on polymarket.com: your **wallet portfolio**, **top traders** and their **real-time activity by category**, plus **AI analysis**—of those leaders’ activity and of Polymarket markets overall—via the **Agent chat**. You get trade hints, your own trade analysis, and AI advice in one place, so it’s genuinely useful for Polymarket traders.
 
-Not a black box—you can read the code, change the config, and run it on your own machine.
+Under the hood: Rust, async I/O, and the same activity WebSocket the official tooling uses. Instant trade flow for one or many leaders, parallel position checks, and a dashboard so you see what’s happening without digging through logs. Not a black box—you can read the code, change the config, and run it on your own machine.
 
 ---
 
