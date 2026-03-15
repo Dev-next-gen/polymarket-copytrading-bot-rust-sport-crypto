@@ -12,8 +12,13 @@ simulation = true
 [copy]
 # Leader address(es) to copy
 target_address = [
+    "0x37c1874a60d348903594a96703e0507c518fc53a",
     "0x204f72f35326db932158cba6adff0b9a1da95e14",
-    "0x63ce342161250d705dc0b16df89036c8e5f9ba9a"
+    "0x63ce342161250d705dc0b16df89036c8e5f9ba9a",
+    "0xb45a797faa52b0fd8adc56d30382022b7b12192c",
+    "0x2a2c53bd278c04da9962fcf96490e17f3dfb9bc1",
+    "0xa1aa96c9d7bba38aba523f7e5e73bf69053cf2b6",
+    "0xfcc373f054f1cc1c395913c81e4b6cee710f97ba"
 ]
 revert_trade = false
 size_multiplier = 0.01

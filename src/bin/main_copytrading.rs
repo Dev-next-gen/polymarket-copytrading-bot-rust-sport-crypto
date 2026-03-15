@@ -193,6 +193,8 @@ fn spawn_web_server(state: SharedState, notify: NotifyTx, port: u16, ui_dir: Pat
             .route("/logs", get(serve_index))
             .route("/settings", get(serve_index))
             .route("/toptraders", get(serve_index))
+            .route("/agent", get(serve_index))
+            .route("/portfolio", get(serve_index))
             .with_state(app_state)
             .fallback_service(serve_dir)
             .layer(middleware::from_fn(static_asset_mime));
