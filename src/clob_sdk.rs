@@ -8,8 +8,6 @@ use alloy::primitives::Address;
 use anyhow::{Context, Result};
 use libloading::Library;
 
-/// Contract addresses from the .so (same shape as SDK ContractConfig).
-/// Uses alloy::Address so this module does not depend on polymarket-client-sdk.
 pub struct ContractConfig {
     pub exchange: Address,
     pub collateral: Address,
@@ -18,7 +16,6 @@ pub struct ContractConfig {
 }
 
 static LIB: OnceLock<Result<Library, libloading::Error>> = OnceLock::new();
-/// Path we loaded the .so from (set on first successful load). Use to confirm the SDK is loaded.
 static LOADED_PATH: OnceLock<String> = OnceLock::new();
 
 fn load_lib() -> Result<&'static Library> {
@@ -40,11 +37,7 @@ fn load_lib() -> Result<&'static Library> {
             let found = None;
             found
         })
-        .context(
-            "CLOB SDK .so not found. Set LIBCOB_SDK_SO to the path of lib.so (or lib.so), \
-             or place lib.so in ./lib/ (same as c-polymarket-sports-trading-bot). \
-             Build: cd polymarket-clob-sdk && cargo build --release --features clob",
-        )?;
+        .context("CLOB SDK .so not found. Set LIBCOB_SDK_SO or place lib.so in ./lib/")?;
     let lib = LIB
         .get_or_init(|| unsafe { Library::new(&path) })
         .as_ref()
@@ -53,19 +46,14 @@ fn load_lib() -> Result<&'static Library> {
     Ok(lib)
 }
 
-/// Load the CLOB SDK .so at startup. Call this (e.g. from main) to fail fast with a clear error
-/// if the library is missing, instead of failing later when creating the client.
 pub fn ensure_loaded() -> Result<()> {
     load_lib().map(|_| ())
 }
 
-/// Path the CLOB SDK was loaded from, if it has been loaded. Use to confirm the .so is loaded
-/// (e.g. "lib/lib.so"); if this returns None, only the fallback chain ID 137 was used.
 pub fn loaded_path() -> Option<&'static str> {
     LOADED_PATH.get().map(String::as_str)
 }
 
-/// Polygon mainnet chain ID (137). From the loaded .so.
 pub fn polygon_chain_id() -> u64 {
     let lib = match load_lib() {
         Ok(l) => l,
@@ -95,7 +83,6 @@ fn read_string_from_ffi(
     Ok(Some(s.to_string()))
 }
 
-/// Get contract config from the loaded SDK .so. Same as SDK's contract_config(chain_id, is_neg_risk).
 pub fn contract_config(chain_id: u64, is_neg_risk: bool) -> Result<Option<ContractConfig>> {
     let lib = load_lib()?;
     let exchange = match read_string_from_ffi(
@@ -232,7 +219,6 @@ pub fn client_create(
     Ok(handle)
 }
 
-/// Destroy client. Call when done with the handle.
 pub fn client_destroy(handle: u64) -> Result<()> {
     let lib = load_lib()?;
     let destroy: libloading::Symbol<unsafe extern "C" fn(c_ulonglong) -> c_int> =
@@ -244,7 +230,6 @@ pub fn client_destroy(handle: u64) -> Result<()> {
     Ok(())
 }
 
-/// Post limit order. Returns order_id on success.
 pub fn post_limit_order(
     handle: u64,
     token_id: &str,
@@ -357,7 +342,6 @@ pub fn post_market_order(
     Ok(String::from_utf8_lossy(unsafe { std::slice::from_raw_parts(order_id_buf.as_ptr() as *const u8, len) }).into_owned())
 }
 
-/// Fetch balance and allowance for token. asset_type: "Collateral" (USDC) or "Conditional".
 pub fn balance_allowance(
     handle: u64,
     token_id: &str,
@@ -434,7 +418,18 @@ pub fn update_balance_allowance(handle: u64, token_id: &str, asset_type: &str) -
     Ok(())
 }
 
-/// Get tick size for token (e.g. "0.01").
+
+pub fn get_api_connection() -> Result<()> {
+    let lib = load_lib()?;
+    let f: libloading::Symbol<unsafe extern "C" fn() -> c_int> =
+        unsafe { lib.get(b"clob_sdk_get_api_connection") }.context("clob_sdk_get_api_connection not found")?;
+    let ret = unsafe { f() };
+    if ret != 0 {
+        anyhow::bail!("clob_sdk_get_api_connection failed (ret={})", ret);
+    }
+    Ok(())
+}
+
 pub fn tick_size(handle: u64, token_id: &str) -> Result<String> {
     let lib = load_lib()?;
     let f: libloading::Symbol<
@@ -466,7 +461,6 @@ pub fn tick_size(handle: u64, token_id: &str) -> Result<String> {
     Ok(String::from_utf8_lossy(unsafe { std::slice::from_raw_parts(out_buf.as_ptr() as *const u8, len) }).into_owned())
 }
 
-/// Get neg_risk for token. Returns true/false.
 pub fn neg_risk(handle: u64, token_id: &str) -> Result<bool> {
     let lib = load_lib()?;
     let f: libloading::Symbol<

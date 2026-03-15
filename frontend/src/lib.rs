@@ -543,9 +543,6 @@ fn AgentPage(
     let (providers, set_providers) = create_signal::<Vec<AgentProviderInfo>>(vec![]);
     let (selected_provider_id, set_selected_provider_id) = create_signal::<String>(String::new());
     let dropdown_open = create_rw_signal(false);
-    // Fetch providers once on mount. Do not read selected_provider_id inside the effect
-    // or Leptos will re-run the effect when selection changes, causing repeated fetches
-    // and the dropdown label to keep changing.
     let providers_fetched = create_rw_signal(false);
     create_effect(move |_| {
         if providers_fetched.get() {

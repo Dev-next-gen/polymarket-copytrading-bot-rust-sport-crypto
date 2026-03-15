@@ -43,7 +43,7 @@ pub struct CopyArgs {
     #[arg(short, long, default_value = "trade.toml")]
     pub trade_config: PathBuf,
 
-    /// Run in simulation (no real orders)
+    /// Simulation mode
     #[arg(long)]
     pub simulation: bool,
 
@@ -52,7 +52,6 @@ pub struct CopyArgs {
     pub ui_dir: PathBuf,
 }
 
-/// Notify clients that state changed (e.g. new trade); used for SSE.
 pub type NotifyTx = broadcast::Sender<()>;
 
 #[derive(Clone)]
@@ -201,7 +200,6 @@ const OPENROUTER_DEFAULT_MODEL: &str = "anthropic/claude-3.5-sonnet";
 const OPENAI_DEFAULT_MODEL: &str = "gpt-4o-mini";
 const ANTHROPIC_DEFAULT_MODEL: &str = "claude-3-5-sonnet-20241022";
 
-/// Build a short, user-friendly error message for LLM API failures (e.g. 429 quota).
 fn parse_llm_error_message(status: u16, body: &str) -> String {
     let json: Option<serde_json::Value> = serde_json::from_str(body).ok();
     let error_msg = json
@@ -235,7 +233,6 @@ fn parse_llm_error_message(status: u16, body: &str) -> String {
     format!("LLM API error {}: {}", status, trimmed)
 }
 
-/// Same method as Mahoraga (https://mahoraga.dev/): Monitor → Analyze. No Execute — research and guidance only.
 const OPENROUTER_SYSTEM_PROMPT: &str = r#"You are an autonomous analysis layer using the same method as Mahoraga (Monitor → Analyze). You do NOT Execute: no trades or buy/sell orders, only research and guidance.
 
 Mahoraga's flow: the agent monitors for signals, then each signal is researched by the LLM—analyzing sentiment, timing, catalysts, and red flags. You do that research step. When the user asks a substantive market or position question, treat their question as the "signal" and research it the same way.
@@ -435,7 +432,6 @@ async fn serve_index(State(app): State<AppState>) -> Result<Response, (StatusCod
     Ok(res)
 }
 
-/// Set correct Content-Type for .wasm and .js so the browser runs the Leptos app.
 async fn static_asset_mime(req: Request<Body>, next: Next) -> Response {
     let path = req.uri().path().to_string();
     let mut res = next.run(req).await;
@@ -489,10 +485,8 @@ fn spawn_web_server(state: SharedState, notify: NotifyTx, port: u16, ui_dir: Pat
     });
 }
 
-/// More worker threads so agent/HTTP handlers are not starved by copy-trading and activity stream.
 #[tokio::main(flavor = "multi_thread", worker_threads = 8)]
 async fn main() -> Result<()> {
-    // Load .env so OPENROUTER_API_KEY is set for the agent page
     dotenvy::dotenv().ok();
     env_logger::Builder::from_default_env()
         .filter_level(log::LevelFilter::Info)
@@ -501,11 +495,8 @@ async fn main() -> Result<()> {
     let args = CopyArgs::parse();
     let config = Config::load(&args.config)?;
 
-    // Load CLOB SDK .so (lib/lib.so or lib/lib.so) same as c-polymarket-sports-trading-bot.
-    // Fail here with a clear error if the library is missing.
-    clob_sdk::ensure_loaded().context("Load CLOB SDK before starting (place lib.so in ./lib/)")?;
+    clob_sdk::ensure_loaded()?;
     let chain_id = polygon();
-    let path = clob_sdk::loaded_path().unwrap_or("(unknown)");
     let trade_path = if args.trade_config.is_absolute() {
         args.trade_config.clone()
     } else {
@@ -541,9 +532,14 @@ async fn main() -> Result<()> {
         config.polymarket.signature_type,
     ));
 
-    // if !simulation {
-        api.authenticate().await.context("Polymarket authenticate")?;
-    // }
+    if !simulation {
+        let api_auth = api.clone();
+        tokio::spawn(async move {
+            if let Err(e) = api_auth.authenticate().await {
+                log::error!("CLOB authentication (background) failed: {}", e);
+            }
+        });
+    }
 
     let wallet = if simulation {
         "simulation".to_string()
@@ -620,9 +616,13 @@ async fn main() -> Result<()> {
         simulation,
     );
 
-    // Positions UI poll: fetch for .env wallet (config) and for each copy target.
-    let mut users_to_fetch: Vec<String> = vec![wallet.clone()];
-    users_to_fetch.extend(targets.iter().cloned());
+    let users_to_fetch: Vec<String> = if wallet == "simulation" {
+        targets.iter().cloned().collect()
+    } else {
+        let mut u = vec![wallet.clone()];
+        u.extend(targets.iter().cloned());
+        u
+    };
     let mut initial_done: std::collections::HashSet<String> = std::collections::HashSet::new();
     loop {
         let fetch_futures: Vec<_> = users_to_fetch
