@@ -62,6 +62,19 @@ Open **http://localhost:8000** for the UI. The API is up either way; the dashboa
 
 ---
 
+## Features
+
+| Feature | Description |
+|--------|-------------|
+| **Dashboard** | Live overview: activity stream, copy targets, and status. Single page for “what’s happening now.” |
+| **Agent** | LLM chat (OpenRouter, OpenAI, or Claude). Monitor → Analyze only: research and guidance, no execution. Provider dropdown uses whichever API keys you set in `.env`. |
+| **Logs** | Real-time activity and trade log; streamed via SSE so you see trades and events as they happen. |
+| **Top traders** | Copy targets from `trade.toml`; follow one or many leaders and see their activity in the stream. |
+| **Portfolio** | Active trades and total value for your wallet (config/.env). Positions for each copy target so you can compare. |
+| **Settings** | Server and copy config at a glance (port, simulation, targets, multiplier, exit rules). |
+
+---
+
 ## Real-time for one or many targets
 
 The bot subscribes to Polymarket’s **activity WebSocket** (`wss://ws-live-data.polymarket.com`) once and filters client-side by your target address(es). So you get **instant trade flow for every leader**—one or ten. Trades are pushed as they happen; you copy with minimal delay and see them in the UI in real time. A separate loop only refreshes positions for the dashboard; all copying is driven by the stream.
