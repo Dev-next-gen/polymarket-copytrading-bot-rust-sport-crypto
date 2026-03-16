@@ -184,7 +184,7 @@ fn Layout(
             ></div>
             {nav}
             <div class="main-content flex flex-col flex-1 min-w-0 overflow-hidden">
-                <header class="shrink-0 flex items-center gap-3 mb-4">{header}</header>
+                <header class="main-content-header shrink-0 flex items-center gap-3">{header}</header>
                 <div class="flex flex-1 min-h-0 overflow-hidden gap-0 flex-col">
                     {match aside {
                         Some(a) => view! { <div class="flex flex-1 min-h-0 gap-4"><div class="flex-1 min-w-0 overflow-hidden flex flex-col">{main}</div><aside class="w-full md:w-[380px] shrink-0 overflow-hidden flex flex-col">{a}</aside></div> }.into_view(),
@@ -200,9 +200,16 @@ fn Layout(
 fn Sidebar(
     theme: RwSignal<String>,
     sidebar_open: RwSignal<bool>,
+    state: ReadSignal<Option<BotState>>,
 ) -> impl IntoView {
     let location = use_location();
     let path = move || location.pathname.get();
+    let mode = move || {
+        state.get()
+            .as_ref()
+            .map(|s| s.status.mode.clone())
+            .unwrap_or_else(|| "—".to_string())
+    };
     let is_active = move |p: &str| {
         let binding = path().trim_end_matches('/').to_string();
         let trim = p.trim_end_matches('/');
@@ -217,6 +224,20 @@ fn Sidebar(
     let settings_icon = "<svg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'><circle cx='12' cy='12' r='3'/><path d='M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z'/></svg>";
     view! {
         <nav class="sidebar">
+            <div class="sidebar-mode-wrap">
+                <span
+                    class=move || {
+                        if mode() == "Live" {
+                            "mode-pill mode-pill--live mode-pill--sidebar"
+                        } else {
+                            "mode-pill mode-pill--simulation mode-pill--sidebar"
+                        }
+                    }
+                >
+                    <span class="mode-pill-dot"></span>
+                    {move || if mode() == "Live" { "Live" } else { "Simulation" }.to_string()}
+                </span>
+            </div>
             <div class="sidebar-top">
                 <div class="nav-label">"Navigation"</div>
                 <A href="/" class=move || if is_active("/") { "active" } else { "" } on:click=move |_| sidebar_open.set(false)>
@@ -642,7 +663,7 @@ fn AgentPage(
                     }).collect_view()}
                 </div>
             </aside>
-            <div class="agent-chat-main flex-1 overflow-auto flex flex-col min-w-0">
+            <div class="agent-chat-main">
                 <div class="agent-chat-scroll p-4 flex flex-col">
             <div class="agent-header">
                 <span class="agent-name">{AGENT_NAME}</span>
@@ -880,67 +901,89 @@ fn PortfolioPage(state: Option<BotState>) -> impl IntoView {
 fn DashboardPage(state: Option<BotState>) -> impl IntoView {
     let mode = state.as_ref().map(|s| s.status.mode.clone()).unwrap_or_else(|| "—".to_string());
     let targets = state.as_ref().map(|s| s.status.targets).unwrap_or(0);
-    let addresses = state.as_ref().and_then(|s| s.status.target_addresses.clone()).unwrap_or_default();
+    let wallet = state.as_ref().and_then(|s| s.status.wallet.clone()).unwrap_or_default();
+    let positions_count = state.as_ref().map_or(0, |s| {
+        if wallet.is_empty() {
+            0
+        } else {
+            s.positions.get(&wallet.to_lowercase()).map(|p| p.len()).unwrap_or(0)
+        }
+    });
+    let mode_for_dot = mode.clone();
     let recent: Vec<TradeLog> = state
         .as_ref()
-        .map(|s| s.logs.iter().rev().take(5).cloned().collect())
+        .map(|s| s.logs.iter().rev().take(8).cloned().collect())
         .unwrap_or_default();
     view! {
-        <div class="flex-1 overflow-auto p-4">
+        <div class="dashboard-page flex-1 overflow-auto p-4">
             <h1 class="page-title">"Dashboard"</h1>
-            <p class="text-sm mb-4">"Overview and current status."</p>
-            <div class="grid gap-3 max-w-md">
-                <div class="card p-3">
-                    <span class="section-label">"Mode"</span>
-                    <p class="text-sm">{mode.clone()}</p>
+            <p class="page-desc">"Overview and current status."</p>
+
+            <div class="dashboard-status-card card">
+                <div class="dashboard-status-head">
+                    <span class="dashboard-status-title">"Copy trading"</span>
+                    <span class=move || if mode_for_dot == "Live" { "dashboard-status-dot dashboard-status-dot--live" } else { "dashboard-status-dot dashboard-status-dot--sim" }></span>
                 </div>
-                <div class="card p-3">
-                    <span class="section-label">"Targets"</span>
-                    <p class="text-sm">{targets} " target(s)"</p>
-                    {if !addresses.is_empty() {
-                        view! {
-                            <div class="text-dim text-xs mt-1 font-mono break-all space-y-0.5">
-                                {addresses
-                                    .into_iter()
-                                    .map(|addr| view! { <p class="break-all">{addr}</p> })
-                                    .collect_view()}
-                            </div>
-                        }
-                            .into_view()
-                    } else {
-                        view! {}.into_view()
-                    }}
-                </div>
-                <div class="card p-3">
-                    <span class="section-label">"Recent activity"</span>
+                <p class="dashboard-status-desc">{format!("{} target(s) · {}", targets, if mode == "Live" { "Live" } else { "Simulation" })}</p>
+                <A href="/agent" class="btn btn-primary dashboard-status-btn">
+                    "Ask Agent"
+                </A>
+            </div>
+
+            <div class="dashboard-grid">
+                <section class="dashboard-activity card">
+                    <h2 class="dashboard-section-title">
+                        <span class="dashboard-section-dot"></span>
+                        "Recent activity"
+                    </h2>
                     {if recent.is_empty() {
-                        view! { <p class="text-muted text-sm">"No activity yet."</p> }.into_view()
+                        view! { <p class="dashboard-empty">"No activity yet."</p> }.into_view()
                     } else {
                         view! {
-                            <ul class="text-sm mt-1 space-y-1">
-                                {recent
-                                    .into_iter()
-                    .map(|r| {
-                        let t = if r.time.len() >= 19 {
-                            r.time[11..19].to_string()
-                        } else {
-                            r.time.clone()
-                        };
-                        let s = r.side.clone();
-                        let o = r.outcome.clone();
-                        let p = r.price.clone();
-                        let sl = r.slug.clone();
-                        view! {
-                            <li>
-                                {t} " " {s} " " {o} " @ " {p} " — " {sl}
-                            </li>
-                        }
-                    })
-                                    .collect_view()}
+                            <ul class="dashboard-activity-list">
+                                {recent.into_iter().map(|r| {
+                                    let t = if r.time.len() >= 19 { r.time[11..19].to_string() } else { r.time.clone() };
+                                    let is_buy = r.side.eq_ignore_ascii_case("BUY");
+                                    view! {
+                                        <li class="dashboard-activity-item">
+                                            <span class=if is_buy { "dashboard-activity-icon dashboard-activity-icon--buy" } else { "dashboard-activity-icon dashboard-activity-icon--sell" }></span>
+                                            <span class="dashboard-activity-text">{format!("{} {} @ {} — {}", r.side, r.outcome, r.price, if r.slug.len() > 36 { format!("{}…", &r.slug[..33]) } else { r.slug })}</span>
+                                            <span class="dashboard-activity-time">{t}</span>
+                                        </li>
+                                    }
+                                }).collect_view()}
                             </ul>
-                        }
-                            .into_view()
+                        }.into_view()
                     }}
+                </section>
+
+                <div class="dashboard-side">
+                    <section class="dashboard-card card">
+                        <h2 class="dashboard-section-title">"Portfolio"</h2>
+                        <p class="dashboard-metric">{format!("{} position(s) active", positions_count)}</p>
+                        <A href="/portfolio" class="dashboard-link">"View portfolio"</A>
+                    </section>
+                    <section class="dashboard-card card">
+                        <h2 class="dashboard-section-title">"Status"</h2>
+                        <div class="dashboard-status-rows">
+                            <div class="dashboard-status-row">
+                                <span class="dashboard-label">"Mode"</span>
+                                <span class="dashboard-value">{mode}</span>
+                            </div>
+                            <div class="dashboard-status-row">
+                                <span class="dashboard-label">"Targets"</span>
+                                <span class="dashboard-value">{targets}</span>
+                            </div>
+                        </div>
+                    </section>
+                    <section class="dashboard-card card">
+                        <h2 class="dashboard-section-title">"Quick actions"</h2>
+                        <div class="dashboard-actions">
+                            <A href="/agent" class="btn btn-primary dashboard-action-btn">"Ask Agent"</A>
+                            <A href="/logs" class="btn btn-secondary dashboard-action-btn">"View logs"</A>
+                            <A href="/portfolio" class="btn btn-secondary dashboard-action-btn">"Portfolio"</A>
+                        </div>
+                    </section>
                 </div>
             </div>
         </div>
@@ -965,65 +1008,83 @@ fn SettingsPage(
     let default_ui = UiConfig::default();
     let ui = state.as_ref().map(|s| s.ui.clone()).unwrap_or(default_ui);
     view! {
-        <div class="flex-1 overflow-auto p-4">
+        <div class="settings-page flex-1 overflow-auto p-4">
             <h1 class="page-title">"Settings"</h1>
-            <p class="text-sm mb-4">"Current bot configuration. Target colors apply to the Log page."</p>
-            <div class="flex flex-col gap-3 max-w-md">
-                <div class="card p-3 flex items-center justify-between gap-2">
-                    <span class="text-sm text-muted">"Mode"</span>
-                    <span class="text-xs font-medium">{mode}</span>
-                </div>
-                <div class="card p-3 flex items-center justify-between gap-2">
-                    <span class="text-sm text-muted">"Targets"</span>
-                    <span class="text-xs tabular-nums">{targets}</span>
-                </div>
-                <div class="card p-3 flex flex-col gap-2">
-                    <span class="text-sm text-muted">"Target address · color (for Logs page)"</span>
-                    {if addresses.is_empty() {
-                        view! { <span class="text-xs text-dim">"—"</span> }.into_view()
-                    } else {
-                        view! {
-                            <div class="flex flex-col gap-2 mt-1">
-                                {addresses.into_iter().map(|addr| {
-                                    let addr_for_color = addr.clone();
-                                    let color = move || {
-                                        target_colors.get().get(&addr_for_color).cloned().unwrap_or_else(|| "#8af".to_string())
-                                    };
-                                    let addr_clone = addr.clone();
-                                    view! {
-                                        <div class="flex items-center gap-2 flex-wrap">
-                                            <input
-                                                type="color"
-                                                class="w-8 h-8 cursor-pointer rounded border bg-transparent"
-                                                prop:value=color
-                                                on:input=move |ev| {
-                                                    let val = event_target_value(&ev);
-                                                    target_colors.update(|m| { m.insert(addr_clone.clone(), val.clone()); });
-                                                    save_target_colors_to_storage(&target_colors.get());
-                                                }
-                                            />
-                                            <span class="text-xs font-mono break-all">{addr}</span>
-                                        </div>
-                                    }
-                                }).collect_view()}
-                            </div>
-                        }.into_view()
-                    }}
-                </div>
-                <div class="card p-3 flex items-center justify-between gap-2">
-                    <span class="text-sm text-muted">"Wallet"</span>
-                    <span class="text-xs font-mono break-all max-w-[200px] truncate" title=wallet.clone()>
-                        {wallet}
-                    </span>
-                </div>
-                <div class="card p-3 flex items-center justify-between gap-2">
-                    <span class="text-sm text-muted">"Delta highlight (sec)"</span>
-                    <span class="text-xs tabular-nums">{ui.delta_highlight_sec}</span>
-                </div>
-                <div class="card p-3 flex items-center justify-between gap-2">
-                    <span class="text-sm text-muted">"Delta animation (sec)"</span>
-                    <span class="text-xs tabular-nums">{ui.delta_animation_sec}</span>
-                </div>
+            <p class="text-sm text-muted mb-5">"Current bot configuration. Target colors apply to the Log page."</p>
+
+            <div class="settings-grid">
+                <section class="settings-section">
+                    <h2 class="settings-section-title">"Status"</h2>
+                    <div class="settings-section-content">
+                        <div class="settings-row">
+                            <span class="settings-label">"Mode"</span>
+                            <span class="settings-value">{mode}</span>
+                        </div>
+                        <div class="settings-row">
+                            <span class="settings-label">"Targets"</span>
+                            <span class="settings-value tabular-nums">{targets}</span>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="settings-section">
+                    <h2 class="settings-section-title">"Wallet"</h2>
+                    <div class="settings-section-content">
+                        <div class="settings-row settings-row--full">
+                            <span class="settings-value settings-value--mono" title=wallet.clone()>{wallet}</span>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="settings-section">
+                    <h2 class="settings-section-title">"Target address · color (Logs page)"</h2>
+                    <div class="settings-section-content">
+                        {if addresses.is_empty() {
+                            view! { <span class="text-xs text-dim">"No targets"</span> }.into_view()
+                        } else {
+                            view! {
+                                <div class="settings-target-list">
+                                    {addresses.into_iter().map(|addr| {
+                                        let addr_for_color = addr.clone();
+                                        let color = move || {
+                                            target_colors.get().get(&addr_for_color).cloned().unwrap_or_else(|| "#8af".to_string())
+                                        };
+                                        let addr_clone = addr.clone();
+                                        view! {
+                                            <div class="settings-target-row">
+                                                <input
+                                                    type="color"
+                                                    class="settings-color-input"
+                                                    prop:value=color
+                                                    on:input=move |ev| {
+                                                        let val = event_target_value(&ev);
+                                                        target_colors.update(|m| { m.insert(addr_clone.clone(), val.clone()); });
+                                                        save_target_colors_to_storage(&target_colors.get());
+                                                    }
+                                                />
+                                                <span class="settings-address font-mono">{addr}</span>
+                                            </div>
+                                        }
+                                    }).collect_view()}
+                                </div>
+                            }.into_view()
+                        }}
+                    </div>
+                </section>
+
+                <section class="settings-section">
+                    <h2 class="settings-section-title">"UI"</h2>
+                    <div class="settings-section-content">
+                        <div class="settings-row">
+                            <span class="settings-label">"Delta highlight (sec)"</span>
+                            <span class="settings-value tabular-nums">{ui.delta_highlight_sec}</span>
+                        </div>
+                        <div class="settings-row">
+                            <span class="settings-label">"Delta animation (sec)"</span>
+                            <span class="settings-value tabular-nums">{ui.delta_animation_sec}</span>
+                        </div>
+                    </div>
+                </section>
             </div>
         </div>
     }
@@ -1372,14 +1433,14 @@ fn AppInner() -> impl IntoView {
     let is_log_page = move || path().trim_end_matches('/') == "/logs";
     let hide_header_pill_and_targets = move || {
         let p = path().trim_end_matches('/').to_string();
-        p.is_empty() || p == "/" || p == "/agent" || p == "/toptraders" || p == "/portfolio"
+        p.is_empty() || p == "/" || p == "/agent" || p == "/toptraders" || p == "/portfolio" || p == "/settings"
     };
     let no_aside: Option<()> = None;
 
     let menu_icon = "<svg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'><line x1='3' y1='6' x2='21' y2='6'/><line x1='3' y1='12' x2='21' y2='12'/><line x1='3' y1='18' x2='21' y2='18'/></svg>";
     view! {
         <Layout
-            nav=view! { <Sidebar theme=theme sidebar_open=sidebar_open/> }
+            nav=view! { <Sidebar theme=theme sidebar_open=sidebar_open state=state/> }
             header=view! {
                 <button
                     class="menu-btn"
@@ -1392,17 +1453,6 @@ fn AppInner() -> impl IntoView {
                         view! { <span></span> }.into_view()
                     } else {
                         view! {
-                            <span
-                                class=move || {
-                                    if mode() == "Live" {
-                                        "pill pill-live"
-                                    } else {
-                                        "pill pill-sim"
-                                    }
-                                }
-                            >
-                                {move || mode().as_str().to_string()}
-                            </span>
                             {move || {
                     if is_log_page() {
                         let addrs = target_addresses();
@@ -1477,7 +1527,7 @@ fn AppInner() -> impl IntoView {
                         }.into_view()
                     } else if p == "/agent" {
                         view! {
-                            <div class="flex-1 min-h-0 flex flex-col overflow-hidden">
+                            <div class="agent-route-wrap flex flex-col overflow-hidden">
                                 <AgentPage
                                     state=state_slice()
                                     input_value=agent_input_value
