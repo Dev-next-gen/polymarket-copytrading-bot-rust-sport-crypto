@@ -172,6 +172,8 @@ fn Layout(
     sidebar_open: RwSignal<bool>,
 ) -> impl IntoView {
     let theme_attr = move || theme.get();
+    let location = use_location();
+    let is_agent = move || location.pathname.get().trim_end_matches('/') == "/agent";
     view! {
         <div
             class="app-shell"
@@ -183,7 +185,10 @@ fn Layout(
                 on:click=move |_| sidebar_open.set(false)
             ></div>
             {nav}
-            <div class="main-content flex flex-col flex-1 min-w-0 overflow-hidden">
+            <div
+                class="main-content flex flex-col flex-1 min-w-0 overflow-hidden"
+                class:main_content_agent=is_agent
+            >
                 <header class="main-content-header shrink-0 flex items-center gap-3">{header}</header>
                 <div class="flex flex-1 min-h-0 overflow-hidden gap-0 flex-col">
                     {match aside {
@@ -298,8 +303,10 @@ fn LogPage(
         {move || {
             let _ = target_colors.get();
             let all_logs = logs();
+            // If no target or the special "all" value is selected, show every log.
             let filtered = match selected_target() {
                 None => all_logs,
+                Some(ref addr) if addr.is_empty() || addr == LOG_TARGET_ALL => all_logs,
                 Some(ref addr) => all_logs
                     .into_iter()
                     .filter(|r| {
@@ -316,13 +323,13 @@ fn LogPage(
             let current_value = selected_target().as_deref().unwrap_or(LOG_TARGET_ALL).to_string();
             view! {
                 <div class="flex-1 overflow-auto overflow-x-auto min-h-0 flex flex-col p-4" style="min-height: 200px;">
+                    <div class="page-content">
                     <div class="logs-page-header">
                         <h1 class="page-title mb-0">"Logs"</h1>
-                        <div class="logs-title-accent"></div>
                     </div>
                     <p class="page-desc mb-4">"Target activities and copy-trade events."</p>
-                    <div class="card flex flex-col gap-1 p-2 mb-4">
-                        <label for="log-target-select" class="text-muted text-xs">"Log target"</label>
+                    <div class="card flex flex-col gap-2 p-2 mb-4">
+                        <label for="log-target-select" class="text-muted text-xs mb-1">"Log target"</label>
                         <select
                             id="log-target-select"
                             class="max-w-[280px] text-xs font-mono"
@@ -433,6 +440,7 @@ fn LogPage(
                             }}
                         }.into_view()
                     }}
+                    </div>
                 </div>
             }
         }}
@@ -878,7 +886,7 @@ fn PortfolioPage(state: Option<BotState>) -> impl IntoView {
         })
         .unwrap_or_else(|| "—".to_string());
     view! {
-        <div class="flex-1 overflow-auto p-4">
+        <div class="page-content flex-1 overflow-auto p-4">
             <h1 class="page-title">"Portfolio"</h1>
             <p class="page-desc mb-4">"Total value and open positions for your wallet (.env / config)."</p>
             <div class="grid gap-3 md:grid-cols-3 mb-6">
@@ -944,7 +952,7 @@ fn DashboardPage(state: Option<BotState>) -> impl IntoView {
         .map(|s| s.logs.iter().rev().take(8).cloned().collect())
         .unwrap_or_default();
     view! {
-        <div class="dashboard-page flex-1 overflow-auto p-4">
+        <div class="page-content dashboard-page flex-1 overflow-auto p-4">
             <h1 class="page-title">"Dashboard"</h1>
             <p class="page-desc">"Overview and current status."</p>
 
@@ -1037,7 +1045,7 @@ fn SettingsPage(
     let default_ui = UiConfig::default();
     let ui = state.as_ref().map(|s| s.ui.clone()).unwrap_or(default_ui);
     view! {
-        <div class="settings-page flex-1 overflow-auto p-4">
+        <div class="page-content settings-page flex-1 overflow-auto p-4">
             <h1 class="page-title">"Settings"</h1>
             <p class="text-sm text-muted mb-5">"Current bot configuration. Target colors apply to the Log page."</p>
 
@@ -1129,10 +1137,10 @@ fn TopTradersPage() -> impl IntoView {
         |(c, t, o)| async move { fetch_leaderboard(&c, &t, &o).await },
     );
     view! {
-        <div class="flex-1 overflow-auto flex flex-col min-h-0 p-4">
-            <h1 class="page-title mb-3">"Top traders"</h1>
-            <p class="text-sm text-muted mb-3">"Polymarket leaderboard (by PnL or volume)."</p>
-            <div class="flex flex-wrap gap-2 mb-3">
+        <div class="page-content flex-1 overflow-auto flex flex-col min-h-0 p-4">
+            <h1 class="page-title mb-1">"Top traders"</h1>
+            <p class="page-desc mb-3">"Polymarket leaderboard (by PnL or volume)."</p>
+            <div class="toptraders-filters card p-3 mb-4 flex flex-wrap gap-3 items-center">
                 <label class="text-xs text-muted flex items-center gap-1">
                     "Category"
                     <select
@@ -1197,8 +1205,8 @@ fn TopTradersPage() -> impl IntoView {
                             view! { <p class="text-muted text-sm">"No entries."</p> }.into_view()
                         } else {
                             view! {
-                                <div class="overflow-x-auto border rounded-lg">
-                                    <table class="w-full border-collapse text-xs">
+                                <div class="card p-0 overflow-x-auto">
+                                    <table class="w-full border-collapse text-xs toptraders-table">
                                         <thead>
                                             <tr class="bg-surface">
                                                 <th class="p-2 text-left text-muted font-medium border-b border">"#"</th>
@@ -1520,7 +1528,7 @@ fn AppInner() -> impl IntoView {
                         }.into_view()
                     } else if p == "/agent" {
                         view! {
-                            <div class="agent-route-wrap flex flex-col overflow-hidden">
+                            <div class="agent-route-wrap flex flex-1 min-h-0 flex-col overflow-hidden w-full">
                                 <AgentPage
                                     state=state_slice()
                                     input_value=agent_input_value
