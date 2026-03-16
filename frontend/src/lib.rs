@@ -318,6 +318,7 @@ fn LogPage(
                 <div class="flex-1 overflow-auto overflow-x-auto min-h-0 flex flex-col p-4" style="min-height: 200px;">
                     <div class="logs-page-header">
                         <h1 class="page-title mb-0">"Logs"</h1>
+                        <div class="logs-title-accent"></div>
                     </div>
                     <p class="page-desc mb-4">"Target activities and copy-trade events."</p>
                     <div class="card flex flex-col gap-1 p-2 mb-4">
