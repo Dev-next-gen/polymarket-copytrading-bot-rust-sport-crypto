@@ -45,14 +45,9 @@ Everything runs locally on your machine. Your keys never leave your server.
 
 | **Dashboard** | **Agent** |
 |:---:|:---:|
-| Copy-trading status, recent activity, portfolio summary, quick actions | AI chat, provider selection, research and guidance |
-| [View screenshot →](https://ibb.co/VWpwgWh3) | [View screenshot →](https://ibb.co/6c6yLMVc) |
-
-For inline images in the README, use ImgBB’s **direct image link**: open each link above → right‑click the image → “Copy image address” (e.g. `https://i.ibb.co/xxxx/filename.png`), then add e.g. `![Dashboard](direct-url)` in the table.
+| <img src="https://i.ibb.co/Rkmq13bj/mm-1.png" alt="mm 1" border="0"> | <img src="https://i.ibb.co/HfXx5kwR/mm-2.png" alt="mm 2" border="0"> |
 
 ---
-
-
 
 ## Quick Start
 
