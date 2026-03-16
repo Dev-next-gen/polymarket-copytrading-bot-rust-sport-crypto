@@ -7,7 +7,7 @@ chain_id = 137
 port = 8000
 
 # When true, log trades but do not execute (use --simulation or set to false for live)
-simulation = false
+simulation = true
 
 [copy]
 # Leader address(es) to copy

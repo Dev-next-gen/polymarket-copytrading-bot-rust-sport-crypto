@@ -41,13 +41,26 @@ Everything runs locally on your machine. Your keys never leave your server.
 
 ---
 
+## Screenshots
+
+| **Dashboard** | **Agent** |
+|:---:|:---:|
+| Copy-trading status, recent activity, portfolio summary, quick actions | AI chat, provider selection, research and guidance |
+| [View screenshot →](https://ibb.co/VWpwgWh3) | [View screenshot →](https://ibb.co/6c6yLMVc) |
+
+For inline images in the README, use ImgBB’s **direct image link**: open each link above → right‑click the image → “Copy image address” (e.g. `https://i.ibb.co/xxxx/filename.png`), then add e.g. `![Dashboard](direct-url)` in the table.
+
+---
+
+
+
 ## Quick Start
 
 ### 1. Clone
 
 ```bash
-git clone https://github.com/frogansol/fast-polymarket-copytrading-bot-rust.git
-cd fast-polymarket-copytrading-bot-rust
+git clone https://github.com/Krypto-Hashers-Community/polymarket-copytrading-bot-rust-sport-crypto.git
+cd polymarket-copytrading-bot-rust-sport-crypto
 ```
 
 ### 2. Configure

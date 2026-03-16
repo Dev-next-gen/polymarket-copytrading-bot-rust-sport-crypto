@@ -179,6 +179,8 @@ body {
 .section-label { font-size: 0.6875rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-dim); margin-bottom: 0.75rem; }
 .page-title { font-size: 1.5rem; font-weight: 600; color: var(--text); margin-bottom: 0.25rem; }
 .page-desc { font-size: 0.875rem; color: var(--text-muted); margin-bottom: 1.5rem; }
+.logs-page-header { margin-bottom: 0.5rem; }
+.logs-title-accent { height: 3px; width: 3rem; background: var(--danger); border-radius: 2px; margin-top: 0.35rem; }
 
 /* Dashboard: status card + grid (activity + side cards) */
 .dashboard-page { max-width: 56rem; }

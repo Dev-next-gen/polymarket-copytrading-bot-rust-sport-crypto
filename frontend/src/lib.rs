@@ -289,6 +289,8 @@ fn Sidebar(
 fn LogPage(
     logs: impl Fn() -> Vec<TradeLog> + 'static,
     selected_target: impl Fn() -> Option<String> + 'static,
+    set_selected_target: WriteSignal<Option<String>>,
+    target_addresses: impl Fn() -> Vec<String> + 'static,
     target_colors: RwSignal<std::collections::HashMap<String, String>>,
     loading: impl Fn() -> bool + 'static,
 ) -> impl IntoView {
@@ -310,10 +312,36 @@ fn LogPage(
             };
             let rows: Vec<_> = filtered.into_iter().rev().collect();
             let is_loading = loading();
+            let addrs = target_addresses();
+            let current_value = selected_target().as_deref().unwrap_or(LOG_TARGET_ALL).to_string();
             view! {
                 <div class="flex-1 overflow-auto overflow-x-auto min-h-0 flex flex-col p-4" style="min-height: 200px;">
-                    <h1 class="page-title mb-2">"Logs"</h1>
+                    <div class="logs-page-header">
+                        <h1 class="page-title mb-0">"Logs"</h1>
+                    </div>
                     <p class="page-desc mb-4">"Target activities and copy-trade events."</p>
+                    <div class="card flex flex-col gap-1 p-2 mb-4">
+                        <label for="log-target-select" class="text-muted text-xs">"Log target"</label>
+                        <select
+                            id="log-target-select"
+                            class="max-w-[280px] text-xs font-mono"
+                            on:change=move |ev| {
+                                let val = event_target_value(&ev);
+                                set_selected_target.set(if val.is_empty() { None } else { Some(val) });
+                            }
+                            prop:value=current_value
+                        >
+                            <option value="">"All targets"</option>
+                            {addrs.into_iter().map(|addr| {
+                                let label = if addr.len() > 14 {
+                                    format!("{}…", &addr[..14])
+                                } else {
+                                    addr.clone()
+                                };
+                                view! { <option value=addr.clone()>{label}</option> }
+                            }).collect_view()}
+                        </select>
+                    </div>
                     {if is_loading {
                         view! {
                             <p class="text-sm text-muted">"Loading activities…"</p>
@@ -1430,10 +1458,9 @@ fn AppInner() -> impl IntoView {
             .map(|s| s.ui.clone())
             .unwrap_or_default()
     };
-    let is_log_page = move || path().trim_end_matches('/') == "/logs";
     let hide_header_pill_and_targets = move || {
         let p = path().trim_end_matches('/').to_string();
-        p.is_empty() || p == "/" || p == "/agent" || p == "/toptraders" || p == "/portfolio" || p == "/settings"
+        p.is_empty() || p == "/" || p == "/agent" || p == "/toptraders" || p == "/portfolio" || p == "/settings" || p == "/logs"
     };
     let no_aside: Option<()> = None;
 
@@ -1453,48 +1480,13 @@ fn AppInner() -> impl IntoView {
                         view! { <span></span> }.into_view()
                     } else {
                         view! {
-                            {move || {
-                    if is_log_page() {
-                        let addrs = target_addresses();
-                        let current = selected_log_target.get();
-                        view! {
-                            <div class="card flex flex-col gap-1 p-2">
-                                <label for="log-target-select" class="text-muted text-xs">"Log target"</label>
-                                <select
-                                    id="log-target-select"
-                                    class="max-w-[280px] text-xs font-mono"
-                                    on:change=move |ev| {
-                                        let val = event_target_value(&ev);
-                                        set_selected_log_target.set(if val.is_empty() { None } else { Some(val) });
-                                    }
-                                    prop:value=move || {
-                                        current.as_deref().unwrap_or(LOG_TARGET_ALL).to_string()
-                                    }
-                                >
-                                    <option value="">"All targets"</option>
-                                    {addrs.into_iter().map(|addr| {
-                                        let label = if addr.len() > 14 {
-                                            format!("{}…", &addr[..14])
-                                        } else {
-                                            addr.clone()
-                                        };
-                                        view! { <option value=addr.clone()>{label}</option> }
-                                    }).collect_view()}
-                                </select>
-                            </div>
-                        }.into_view()
-                    } else {
-                        view! {
                             <div class="text-sm text-muted">
                                 <span>{format!("{} target(s)", targets())}</span>
-                                {target_addresses()
+                                {move || target_addresses()
                                     .into_iter()
                                     .map(|addr| view! { <span class="font-mono text-xs text-dim break-all block">{addr}</span> })
                                     .collect_view()}
                             </div>
-                        }.into_view()
-                    }
-                }}
                         }.into_view()
                     }
                 }}
@@ -1507,10 +1499,10 @@ fn AppInner() -> impl IntoView {
                         let _ = state_slice();
                         let logs_fn = move || state_slice().as_ref().map(|s| s.logs.clone()).unwrap_or_default();
                         let target_fn = move || selected_log_target.get();
-                        let loading_fn = move || state_slice().is_none();
+                        let addrs_fn = move || target_addresses();
                         view! {
                             <div class="flex-1 min-h-0 flex flex-col overflow-hidden">
-                                <LogPage logs=logs_fn selected_target=target_fn target_colors=target_colors loading=loading_fn/>
+                                <LogPage logs=logs_fn selected_target=target_fn set_selected_target=set_selected_log_target target_addresses=addrs_fn target_colors=target_colors loading=move || state_slice().is_none()/>
                             </div>
                         }.into_view()
                     } else if p == "/settings" {
