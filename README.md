@@ -96,7 +96,7 @@ entry_trade_sec = 0
 trade_sec_from_resolve = 0
 ```
 
-**`.env`** *(optional, for AI Agent)*:
+**`.env`** *(not required, for AI Agent)*:
 
 ```env
 OPENROUTER_API_KEY=sk-or-...
