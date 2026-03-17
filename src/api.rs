@@ -120,7 +120,6 @@ impl PolymarketApi {
     }
 
     async fn ensure_clob_client(&self) -> Result<u64> {
-        const CLOB_CLIENT_TIMEOUT_SECS: u64 = 90;
         let notify = Arc::clone(&self.clob_client_notify);
 
         loop {
@@ -179,27 +178,14 @@ impl PolymarketApi {
                 continue;
             }
 
-            let handle = match tokio::time::timeout(
-                std::time::Duration::from_secs(CLOB_CLIENT_TIMEOUT_SECS),
-                jh,
-            )
-            .await
-            {
-                Ok(Ok(Ok(h))) => h,
-                Ok(Ok(Err(e))) => {
+            let handle = match jh.await {
+                Ok(Ok(h)) => h,
+                Ok(Err(e)) => {
                     let mut guard = self.clob_client_state.lock().await;
                     *guard = ClobClientState::Empty;
                     return Err(e);
                 }
-                Ok(Err(e)) => return Err(anyhow::anyhow!("CLOB client creation task panicked: {}", e)),
-                Err(_) => {
-                    let mut guard = self.clob_client_state.lock().await;
-                    *guard = ClobClientState::Empty;
-                    return Err(anyhow::anyhow!(
-                        "CLOB client creation timed out after {}s (get_api_connection may be slow or stuck). Check network and try again.",
-                        CLOB_CLIENT_TIMEOUT_SECS
-                    ));
-                }
+                Err(e) => return Err(anyhow::anyhow!("CLOB client creation task panicked: {}", e)),
             };
 
             {

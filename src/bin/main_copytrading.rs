@@ -532,14 +532,12 @@ async fn main() -> Result<()> {
         config.polymarket.signature_type,
     ));
 
-    if !simulation {
-        let api_auth = api.clone();
-        tokio::spawn(async move {
-            if let Err(e) = api_auth.authenticate().await {
-                log::error!("CLOB authentication (background) failed: {}", e);
-            }
-        });
-    }
+    let api_auth = api.clone();
+    tokio::spawn(async move {
+        if let Err(e) = api_auth.authenticate().await {
+            log::error!("CLOB authentication (background) failed: {}", e);
+        }
+    });
 
     let wallet = if simulation {
         "simulation".to_string()
@@ -582,12 +580,12 @@ async fn main() -> Result<()> {
             .join(&args.ui_dir)
     };
     let (notify_tx, _) = broadcast::channel(64);
+    let entries: Arc<Mutex<HashMap<String, polymarket_trading_bot::copy_trading::Entry>>> =
+        Arc::new(Mutex::new(HashMap::new()));
+
     info!("Serving UI from: {}", ui_dir.display());
     spawn_web_server(web_state.clone(), notify_tx.clone(), port, ui_dir);
     info!("UI: http://localhost:{} (or http://<this-host-ip>:{} from another device)", port, port);
-
-    let entries: Arc<Mutex<HashMap<String, polymarket_trading_bot::copy_trading::Entry>>> =
-        Arc::new(Mutex::new(HashMap::new()));
     if !simulation
         && (copy_config.exit.take_profit > 0.0
             || copy_config.exit.stop_loss > 0.0
@@ -601,11 +599,6 @@ async fn main() -> Result<()> {
         );
         info!("Exit loop started (take_profit/stop_loss/trailing_stop)");
     }
-
-    let poll_secs = copy_config.copy.poll_interval_sec.clamp(0.25, 3600.0);
-    let poll_interval = std::time::Duration::from_secs_f64(poll_secs);
-
-    // Real-time trades for 1 or more targets via activity WebSocket (filter client-side).
     activity_stream::spawn_activity_stream(
         targets.clone(),
         api.clone(),
@@ -615,6 +608,9 @@ async fn main() -> Result<()> {
         entries.clone(),
         simulation,
     );
+
+    let poll_secs = copy_config.copy.poll_interval_sec.clamp(0.25, 3600.0);
+    let poll_interval = std::time::Duration::from_secs_f64(poll_secs);
 
     let users_to_fetch: Vec<String> = if wallet == "simulation" {
         targets.iter().cloned().collect()
