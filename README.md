@@ -10,25 +10,6 @@
 
 ---
 
-## What inspired this bot?
-Lots of traders have bad thoughts that copy trading is  totally impossible? Is it true? Actually Not !!! There is nothing impossible... There are things causing copy trading's failure... Its also been mentioning in solana & EVM chains' copy tradings... copy trading top traders' activities has been lots of traders' goal.. but only very small percent of them got success in copy trading.. just 2 years ago, we got jito and other lots of services in solana to land transacton much faster. so copy trading in solana had lots of progress and success.. but also at that time, lots of pople tried copy trading in solana, and failed. why? cuz the main reason is stragety, just copy trading cant get you a success... there must be a strategy. Recently, we got getting good powerful resource for it.. Thats AI... also lots of bots are only relying on one target to copy trade at once.. its not a good way.. but we can get good ai analysis from copy trading, analyzing, comparing results from multiple targets 
-
-I've been coming up with this idea for long-term, and started started development 5 months ago, spending weeks of time for testing, refining filters, timing logic, and position sizes. Running simulations on historical data and testing with a small live balance showed promising results: steady, consistent gains without chasing extreme volatility.
-
-Btw, all existing copy trading bots are not profitable in lots of cases, the main reason is their bot performance is very bad. its not well-optimized... Lots of polymarket copy trading bots are written in typescript in github, sometimes, python...  they are not fast, not providing multi-threading for faster speed.. with the benefit of rust, we can resolve this issue... 
-
-Rust compiled to WebAssembly (WASM)... Extremely fast, low memory.. Actually Ui performance is not matter... cuz once target wallets and private key are well defined, copy trading activities will be done via backend very fast
-
-This repo is fully written with rust for front end and backend... rust backend is the best choice for buy/sell executoin speed, websocket price feeds, etc.. Rather than using only script based or backend based bot, there are lots of cons and disadvantages to get insight into copy trading... in this case, with UI, can get lots of information real-time using websocket, etc. We can get portoflio, top traders, real-time trading avitigites, ai anlysis and hint whether to copy trade or not.. even for multi-targets' copy trading, can choose colors per every target and to emphasize thier address as colored text in logs, so that we can easily who they are in lots of logs easily...
-
-If we target at multiple targets, sometimes we might face their trade markets are same.. in this case, i thought of AI analysis to choose one target to copy trade by giving target's speicfic category's winning rate from AI analysis, rather than copy trading all targets activies in case they are trading same market some times...
-
-Also sometimes, top traders' strategy are not always right. market keep changes. so their strategy might be wrong sometimes.  so bot's copy trading strategy should be keep changing. So i thought of giving information for top traders' pnl and volume real-time, and ai anlysis into their trading activities...  Also with introduced ai agent, they can getta see and anslysze every top traders' activiteis to decide if they are fit to copy trade hour by hour, day by day, month  by month... in ai agent, can select varoius famous ai services like openrouter.ai, claude.ai, chatgpt, etc to get better lots of response.....  
-
-This isn't about quick wins or chasing hype. It's an AI-powered system that spreads risk across multiple markets — sports, crypto, politics, macroeconomics — and lets smarter decision-making do the heavy lifting. The goal is simple: consistent, steady growth over the long term.
-
----
-
 ## What is this?
 
 A self-hosted trading companion for [Polymarket](https://polymarket.com). Instead of watching polymarket.com and manually tracking traders, you get:
@@ -40,6 +21,21 @@ A self-hosted trading companion for [Polymarket](https://polymarket.com). Instea
 - **Simulation mode** — test strategies with zero risk before going live
 
 Works across politics, sports, crypto, and macro—tune `trade.toml` filters to match the markets you copy. Everything runs locally on your machine. Your keys never leave your server.
+
+---
+
+## What inspired me to build this bot
+
+Copy trading isn’t impossible — but most attempts fail. Even when execution got faster (e.g. Solana, Jito), many people still lost. The main reason is **strategy**: blindly mirroring one wallet isn’t a strategy. You need filters, multiple targets, and a way to decide *which* signals to act on. **AI** is the right tool for that; single-target bots are fragile.
+
+I’ve been developing this idea for a long time and started building about five months ago — testing filters, timing logic, and position sizing. Simulations and a small live balance showed **steady, consistent gains** without chasing volatility.
+
+Most Polymarket copy bots are TypeScript or Python, slow and single-threaded. **Rust** fixes that: fast execution, WebSocket feeds, and real-time processing. This repo is full Rust (backend + frontend compiled to WASM). Once config is set, all copy activity runs in the backend at full speed; the UI is for **insight** — portfolio, top traders, live activity, AI analysis, and colored logs per target so you can tell who did what.
+
+When multiple leaders trade the same market, **AI can help** pick the stronger signal (e.g. by win rate in that category) instead of copying everyone. And because markets and leaders change, the bot streams PnL and activity so you can use the **AI Agent** (OpenRouter, Claude, ChatGPT, etc.) to reassess who’s worth following over time.
+
+The goal isn’t quick wins — it’s **steady growth**, risk spread across markets (sports, crypto, politics, macro), and an AI-assisted system built for the long term.
+
 
 ---
 
