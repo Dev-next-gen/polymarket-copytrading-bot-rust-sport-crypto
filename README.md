@@ -39,7 +39,7 @@ The goal isn’t quick wins — it’s **steady growth**, risk spread across mar
 
 ---
 
-**By [FemtoTrader](https://t.me/femtotrader)** — questions, feedback, and contributions welcome.
+**By [FemtoDev](https://t.me/femtodev)** — questions, feedback, and contributions welcome.
 
 ---
 
