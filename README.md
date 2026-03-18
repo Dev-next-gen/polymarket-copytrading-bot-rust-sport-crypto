@@ -122,19 +122,39 @@ OPENROUTER_API_KEY=sk-or-...
 # or ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-### 3. Build & Run
+### 3. One-time: install frontend build tools
+
+The UI is built with **[Trunk](https://trunkrs.dev/)** (WASM). If you skip this step, `trunk build` fails with **`trunk: command not found`**.
+
+From any directory (project root is fine):
 
 ```bash
-# Build the frontend (once)
-cd frontend && trunk build --release && cd ..
+rustup target add wasm32-unknown-unknown
+```
+```bash
+cargo install trunk
+```
 
-# Run
+**`trunk` not found after install?** Cargo puts binaries in `~/.cargo/bin`. Add it to your `PATH`, then open a new shell:
+
+```bash
+export PATH="$HOME/.cargo/bin:$PATH"
+```
+
+Verify: `which trunk` should print a path, and `trunk --version` should run.
+
+### 4. Build & Run
+
+```bash
+cd frontend && trunk build --release && cd ..
+```
+```bash
 cargo run --release --bin main_copytrading
 ```
 
 Open **http://localhost:8000** — that's it. Dashboard, agent, logs, portfolio, everything is there.
 
-### 4. Simulation mode (no real orders)
+### 5. Simulation mode (no real orders)
 
 ```bash
 cargo run --release --bin main_copytrading -- --simulation
@@ -148,9 +168,16 @@ Perfect for testing your setup, exploring the UI, and evaluating traders before 
 
 | Requirement | Details |
 |------------|---------|
-| **Rust** | 1.70+ |
+| **Rust** | 1.70+ (`rustup` recommended) |
 | **Polymarket account** | USDC on Polygon + CLOB API keys ([docs](https://docs.polymarket.com/developers/CLOB/)) |
-| **Frontend tooling** | `cargo install trunk` and `rustup target add wasm32-unknown-unknown` |
+| **Frontend tooling** | **Required before first UI build:** `rustup target add wasm32-unknown-unknown` and `cargo install trunk`. Ensure `~/.cargo/bin` is on your `PATH` (see Quick Start §3). |
+
+### Troubleshooting
+
+| Symptom | What to do |
+|---------|------------|
+| `trunk: command not found` | Complete Quick Start **§3**, then `export PATH="$HOME/.cargo/bin:$PATH"` (or install Trunk and fix PATH on Windows). |
+| Frontend build errors about WASM | Run `rustup target add wasm32-unknown-unknown` again for your active toolchain. |
 
 ---
 
@@ -208,6 +235,8 @@ Top-level: `clob_host`, `chain_id`, `port`, `simulation`.
 ---
 
 ## Production Deployment
+
+Same one-time setup as locally: **`wasm32-unknown-unknown`** + **`trunk`** on `PATH` (Quick Start §3).
 
 ```bash
 # 1. Build frontend
