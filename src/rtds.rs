@@ -1,6 +1,3 @@
-//! Polymarket Real-Time Data Socket (RTDS) client for Chainlink crypto prices.
-//! Connects to wss://ws-live-data.polymarket.com and subscribes to btc/usd.
-
 use anyhow::Result;
 use futures_util::{SinkExt, StreamExt};
 use log::{debug, warn};

@@ -1,5 +1,3 @@
-//! Shared state for the copy-trading UI: logs, status, positions. Served as JSON at /api/state.
-
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;

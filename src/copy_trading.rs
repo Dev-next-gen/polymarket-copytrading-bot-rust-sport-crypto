@@ -1,6 +1,3 @@
-//! Copy-trading backend: follow one or more leader addresses on Polymarket.
-//! Config from trade.toml; credentials from config.json. Polls Data API positions and copies trades via CLOB.
-
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use rust_decimal::prelude::{ToPrimitive};

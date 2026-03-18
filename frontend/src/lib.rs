@@ -1,6 +1,3 @@
-//! Leptos UI for Polymarket copy-trading bot. Fetches /api/state and displays logs, dashboard, settings, positions.
-//! Real-time updates: EventSource subscribes to /api/state/stream (SSE); backend pushes when new activity is logged.
-
 use leptos::*;
 use leptos_router::*;
 use serde::Deserialize;

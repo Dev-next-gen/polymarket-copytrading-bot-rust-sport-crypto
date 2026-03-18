@@ -1,14 +1,3 @@
-//! Test binary for the merge function of Up and Down token amounts.
-//!
-//! Default: check balance of current BTC 15-minute Up/Down tokens and show merge result.
-//!   cargo run --bin test_merge
-//!
-//! Unit tests only:
-//!   cargo run --bin test_merge -- --unit
-//!
-//! Use a specific condition ID:
-//!   cargo run --bin test_merge -- --condition-id <ID> --config config.json
-
 use anyhow::Result;
 use clap::Parser;
 use polymarket_trading_bot::merge::{merge_up_down_amounts, MergeResult};

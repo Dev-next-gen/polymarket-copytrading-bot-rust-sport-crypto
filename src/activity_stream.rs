@@ -1,7 +1,3 @@
-//! Polymarket Real-Time Activity stream (same as @polymarket/real-time-data-client).
-//! Connects to wss://ws-live-data.polymarket.com, subscribes to activity/trades,
-//! filters by target address, and runs copy-trade flow for instant updates.
-
 use anyhow::{anyhow, Result};
 use futures_util::{SinkExt, StreamExt};
 use log::{info, warn};

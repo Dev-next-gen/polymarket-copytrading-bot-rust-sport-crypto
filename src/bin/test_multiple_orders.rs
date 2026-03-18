@@ -1,12 +1,3 @@
-//! Test binary: place multiple limit orders on Polymarket (same or configurable params).
-//!
-//! Examples:
-//!   # Buy current BTC 15m Up + Down with $1 each (market orders)
-//!   cargo run --bin test_multiple_orders -- --btc-1usd
-//!
-//!   cargo run --bin test_multiple_orders -- --count 3 --price-cents 45 --shares 1
-//!   cargo run --bin test_multiple_orders -- --token-id <ID> --count 5 --delay-ms 1000
-
 use anyhow::Result;
 use clap::Parser;
 use chrono::Utc;

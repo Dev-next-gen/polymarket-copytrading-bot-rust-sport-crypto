@@ -1,10 +1,3 @@
-//! Merge logic for Up and Down tokens in the same market.
-//!
-//! A "complete set" is one Up + one Down token. Merging N complete sets
-//! recovers N × $1 collateral (in CTF terms). This module computes how many
-//! complete sets exist given amounts of Up and Down.
-
-/// Result of merging Up and Down token amounts.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MergeResult {
     /// Number of complete sets (min(up, down)).
@@ -15,16 +8,7 @@ pub struct MergeResult {
     pub remaining_down: f64,
 }
 
-/// Compute how many complete sets (Up + Down pairs) can be formed, and the remainders.
-///
-/// - `complete_sets = min(up_amount, down_amount)`
-/// - `remaining_up = up_amount - complete_sets`
-/// - `remaining_down = down_amount - complete_sets`
-///
-/// # Examples
-/// - (5.0, 5.0) → 5 sets, 0 Up, 0 Down
-/// - (5.0, 3.0) → 3 sets, 2 Up, 0 Down
-/// - (2.0, 7.0) → 2 sets, 0 Up, 5 Down
+
 pub fn merge_up_down_amounts(up_amount: f64, down_amount: f64) -> MergeResult {
     let complete_sets = up_amount.min(down_amount);
     let remaining_up = (up_amount - complete_sets).max(0.0);

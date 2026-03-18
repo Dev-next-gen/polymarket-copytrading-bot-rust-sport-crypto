@@ -1,7 +1,3 @@
-//! Copy-trading backend: follow leader addresses from trade.toml.
-//! Config: config.json (polymarket credentials + API keys), trade.toml (targets, filters, exit).
-//! Serves UI at port (trade.toml) and /api/state for the Leptos frontend.
-
 use anyhow::{Context, Result};
 use axum::{
     body::Body,
