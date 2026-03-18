@@ -65,22 +65,83 @@ The goal isn’t quick wins — it’s **steady growth**, risk spread across mar
 
 ---
 
-## Quick Start
+## Quick Start (installation walkthrough)
 
-### 1. Clone
+Follow these steps in order. Skipping a step (especially Trunk/WASM) is the usual cause of build failures.
+
+| Step | What you do |
+|------|-------------|
+| 1 | [Prerequisites](#1-prerequisites) — Rust, account, tools |
+| 2 | [Clone repo](#2-clone-the-repository) |
+| 3 | [Config files](#3-configuration-files) — `config.json`, `trade.toml`, optional `.env` |
+| 4 | [Frontend toolchain](#4-one-time-frontend-toolchain-trunk--wasm) — Trunk + `wasm32-unknown-unknown` |
+| 5 | [Build UI](#5-build-the-frontend) |
+| 6 | [Run server](#6-run-the-backend--open-the-dashboard) |
+| 7 | [Simulation](#7-simulation-mode-no-live-orders) (optional) |
+
+---
+
+### 1. Prerequisites
+
+**Machine**
+
+- **Linux** or **macOS** (recommended) or **Windows** (WSL2 is easier than native Windows for Rust + Trunk; native Windows works if `cargo` and `trunk` are on `PATH`).
+- ~2–4 GB free disk for Rust toolchain + first compile; stable internet for crate downloads.
+
+**Rust (required)**
+
+1. Install **[rustup](https://rustup.rs/)** if you don’t have Rust yet.
+2. Use the default **stable** toolchain (this project targets Rust **1.70+**).
+3. Confirm in a **new terminal**:
+
+   ```bash
+   rustc --version   # should show 1.70 or higher
+   cargo --version
+   ```
+
+**Polymarket (for live trading)**
+
+- A Polymarket account, **USDC on Polygon**, and **CLOB API** credentials. See the [official CLOB docs](https://docs.polymarket.com/developers/CLOB/). You still need a valid `config.json` to start the app; use **simulation mode** (step 7) if you only want to explore the UI first.
+
+---
+
+### 2. Clone the repository
 
 ```bash
 git clone https://github.com/Krypto-Hashers-Community/polymarket-copytrading-bot-rust-sport-crypto.git
-```
-```bash
 cd polymarket-copytrading-bot-rust-sport-crypto
 ```
 
-### 2. Configure
+Stay in this directory for the rest of the commands unless noted.
 
-Create two files in the project root:
+---
 
-**`config.json`** — your Polymarket CLOB credentials:
+### 3. Configuration files
+
+All paths below are the **project root** (next to `Cargo.toml`).
+
+#### 3.1 `config.json` (required)
+
+The app expects **`config.json`** in the project root. Start from the template:
+
+```bash
+cp config.example.json config.json
+```
+
+Edit `config.json` and fill in at least the **`polymarket`** block:
+
+| Field | What it is |
+|-------|------------|
+| `api_key`, `api_secret`, `api_passphrase` | From Polymarket CLOB dashboard |
+| `private_key` | Polygon wallet private key that signs orders |
+| `proxy_wallet_address` | Only if you use proxy/Magic wallet; else leave `""` or `null` per your setup |
+| `signature_type` | `0` = EOA, `1` = Proxy, `2` = Gnosis Safe |
+
+The template also includes an optional **`trading`** section (slugs, intervals, etc.). You can keep defaults until you tune them.
+
+**Security:** Do not commit `config.json`. Keep it local (it should be gitignored).
+
+Core **`polymarket`** shape:
 
 ```jsonc
 {
@@ -96,8 +157,11 @@ Create two files in the project root:
   }
 }
 ```
+*(Your copied file may include `"trading": { ... }` from `config.example.json` — that is normal.)*
 
-**`trade.toml`** — who to copy and how. Use any leader's wallet address from [Polymarket](https://polymarket.com) as `target_address` or in `target_addresses`:
+#### 3.2 `trade.toml` (required)
+
+The repo includes a **`trade.toml`**. Edit it in the project root: set **`target_address`** or **`target_addresses`** to wallets you want to copy (from [Polymarket](https://polymarket.com) profiles). Adjust **`size_multiplier`**, **`[exit]`**, and **`[filter]`** as needed.
 
 ```toml
 [copy]
@@ -117,7 +181,15 @@ entry_trade_sec = 0
 trade_sec_from_resolve = 0
 ```
 
-**`.env`** *(not required, for AI Agent)*:
+#### 3.3 `.env` (optional — AI Agent only)
+
+For the **Agent** tab (OpenRouter / OpenAI / Claude), copy the sample and add keys:
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env`:
 
 ```env
 OPENROUTER_API_KEY=sk-or-...
@@ -125,62 +197,125 @@ OPENROUTER_API_KEY=sk-or-...
 # or ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-### 3. One-time: install frontend build tools
+You can run the bot without `.env`; only the Agent features need an API key.
 
-The UI is built with **[Trunk](https://trunkrs.dev/)** (WASM). If you skip this step, `trunk build` fails with **`trunk: command not found`**.
+---
 
-From any directory (project root is fine):
+### 4. One-time frontend toolchain (Trunk + WASM)
+
+The dashboard is **Rust → WebAssembly**, built with **[Trunk](https://trunkrs.dev/)**. Without this step you will see **`trunk: command not found`** or WASM linker errors.
+
+**4.1 Add the WASM compile target** (must match your active Rust toolchain):
 
 ```bash
+rustup default stable
 rustup target add wasm32-unknown-unknown
 ```
+
+Check:
+
+```bash
+rustup target list --installed | grep wasm32
+# should show wasm32-unknown-unknown
+```
+
+**4.2 Install Trunk**
+
 ```bash
 cargo install trunk
 ```
 
-**`trunk` not found after install?** Cargo puts binaries in `~/.cargo/bin`. Add it to your `PATH`, then open a new shell:
+First install can take several minutes (compiles Trunk and dependencies).
+
+**4.3 Put Cargo’s `bin` directory on your `PATH`**
+
+Cargo installs `trunk` next to `cargo`. If the shell can’t find `trunk`:
+
+- **Linux / macOS:** add to `~/.bashrc` or `~/.zshrc`, then open a new terminal:
+
+  ```bash
+  export PATH="$HOME/.cargo/bin:$PATH"
+  ```
+
+- **Windows:** add `%USERPROFILE%\.cargo\bin` to the user **PATH** (Environment Variables), then restart the terminal.
+
+**4.4 Verify**
 
 ```bash
-export PATH="$HOME/.cargo/bin:$PATH"
+which trunk    # Linux/macOS — should print e.g. /home/you/.cargo/bin/trunk
+trunk --version
 ```
 
-Verify: `which trunk` should print a path, and `trunk --version` should run.
+If both work, you’re ready to build the frontend.
 
-### 4. Build & Run
+---
+
+### 5. Build the frontend
+
+From the **project root**:
 
 ```bash
-cd frontend && trunk build --release && cd ..
+cd frontend
+trunk build --release
+cd ..
 ```
+
+- First run downloads WASM tooling and compiles the UI; it may take **5–15+ minutes** depending on CPU.
+- Success ends without error; output is under `frontend/dist/` (used when you run the Rust server).
+
+If build fails, see [Troubleshooting](#troubleshooting) below.
+
+---
+
+### 6. Run the backend & open the dashboard
+
+From the **project root**:
+
 ```bash
 cargo run --release --bin main_copytrading
 ```
 
-Open **http://localhost:8000** — that's it. Dashboard, agent, logs, portfolio, everything is there.
+- The **first** `cargo run` compiles the whole workspace; expect a long wait once.
+- When you see the log line that the server is listening, open a browser:
 
-### 5. Simulation mode (no real orders)
+**http://localhost:8000**
+
+(Default port is **8000** unless you changed it in `trade.toml` / config.) Dashboard, Agent, logs, portfolio, and settings are all on that URL.
+
+To expose on your LAN (e.g. `http://<server-ip>:8000`), ensure the process binds to `0.0.0.0` if your setup requires it (see config / code for `host` if applicable).
+
+---
+
+### 7. Simulation mode (no live orders)
+
+Safe way to test UI and config **without** placing real CLOB orders:
 
 ```bash
 cargo run --release --bin main_copytrading -- --simulation
 ```
 
-Perfect for testing your setup, exploring the UI, and evaluating traders before risking capital.
+Use this until you are happy with targets and filters, then run without `--simulation` for live copy-trading.
 
 ---
 
-## Requirements
+## Requirements (summary)
 
 | Requirement | Details |
 |------------|---------|
-| **Rust** | 1.70+ (`rustup` recommended) |
-| **Polymarket account** | USDC on Polygon + CLOB API keys ([docs](https://docs.polymarket.com/developers/CLOB/)) |
-| **Frontend tooling** | **Required before first UI build:** `rustup target add wasm32-unknown-unknown` and `cargo install trunk`. Ensure `~/.cargo/bin` is on your `PATH` (see Quick Start §3). |
+| **Rust** | 1.70+ via [rustup](https://rustup.rs/) (stable) |
+| **Polymarket** | USDC on Polygon + CLOB API keys for live trading ([docs](https://docs.polymarket.com/developers/CLOB/)) |
+| **Frontend build** | `wasm32-unknown-unknown` + `cargo install trunk` + `PATH` including `~/.cargo/bin` (see §4) |
 
 ### Troubleshooting
 
 | Symptom | What to do |
 |---------|------------|
-| `trunk: command not found` | Complete Quick Start **§3**, then `export PATH="$HOME/.cargo/bin:$PATH"` (or install Trunk and fix PATH on Windows). |
-| Frontend build errors about WASM | Run `rustup target add wasm32-unknown-unknown` again for your active toolchain. |
+| `trunk: command not found` | Finish [§4](#4-one-time-frontend-toolchain-trunk--wasm): install Trunk, then add `~/.cargo/bin` (or Windows `%USERPROFILE%\.cargo\bin`) to `PATH`, **new terminal**, run `trunk --version`. |
+| `linker wasm32-unknown-unknown not found` / WASM errors | Run `rustup target add wasm32-unknown-unknown`. If you switched toolchain, add the target again for **that** toolchain. |
+| `trunk build` fails (openssl / SSL) | On Linux, install `pkg-config` and `libssl-dev` (Debian/Ubuntu) or your distro’s OpenSSL dev package; retry `cargo install trunk` and `trunk build`. |
+| Blank page or 404 on `/` | Build the frontend first ([§5](#5-build-the-frontend)); the Rust binary serves the built WASM assets from `frontend/dist`. |
+| Port already in use | Another process uses `8000`, or set `port` in `trade.toml` / env if supported. |
+| Config errors on startup | Validate JSON in `config.json`; ensure `trade.toml` exists and `[copy]` has at least one target. |
 
 ---
 
@@ -239,7 +374,7 @@ Top-level: `clob_host`, `chain_id`, `port`, `simulation`.
 
 ## Production Deployment
 
-Same one-time setup as locally: **`wasm32-unknown-unknown`** + **`trunk`** on `PATH` (Quick Start §3).
+Same one-time setup as locally: **`wasm32-unknown-unknown`** + **`trunk`** on `PATH` ([Quick Start §4](#4-one-time-frontend-toolchain-trunk--wasm)).
 
 ```bash
 # 1. Build frontend
