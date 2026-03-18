@@ -338,7 +338,10 @@ async fn api_agent_chat(
             ProviderKind::OpenRouter => {
                 req = req
                     .header("Authorization", format!("Bearer {}", api_key))
-                    .header("HTTP-Referer", "https://github.com/frogansol/fast-polymarket-copytrading-bot-rust");
+                    .header(
+                        "HTTP-Referer",
+                        "https://github.com/Krypto-Hashers-Community/polymarket-copytrading-bot-rust-sport-crypto",
+                    );
             }
             ProviderKind::OpenAI => {
                 req = req.header("Authorization", format!("Bearer {}", api_key));
