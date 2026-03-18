@@ -607,15 +607,16 @@ async fn main() -> Result<()> {
         u.extend(targets.iter().cloned());
         u
     };
+    let users_lower: Vec<String> = users_to_fetch.iter().map(|s| s.to_lowercase()).collect();
     let mut initial_done: std::collections::HashSet<String> = std::collections::HashSet::new();
     loop {
-        let fetch_futures: Vec<_> = users_to_fetch
+        let fetch_futures: Vec<_> = users_lower
             .iter()
-            .map(|user| {
-                let user_lower = user.to_lowercase();
+            .map(|user_lower| {
                 let api = api.clone();
+                let user_lower = user_lower.clone();
                 async move {
-                    let res = api.get_positions(&user_lower).await;
+                    let res = api.get_positions(user_lower.as_str()).await;
                     (user_lower, res)
                 }
             })
@@ -634,30 +635,32 @@ async fn main() -> Result<()> {
                 .iter()
                 .map(|p| {
                     (
-                        p.slug.clone().unwrap_or_else(|| "?".to_string()),
-                        p.outcome.clone().unwrap_or_else(|| "?".to_string()),
+                        p.slug.as_deref().unwrap_or("?").to_string(),
+                        p.outcome.as_deref().unwrap_or("?").to_string(),
                         p.size,
                         p.cur_price,
                     )
                 })
                 .collect();
-            web_state::set_positions(web_state.clone(), user_lower.clone(), pos_list).await;
+            web_state::set_positions(web_state.clone(), user_lower.as_str(), pos_list).await;
 
             if !initial_done.contains(&user_lower) {
                 info!("INIT | {} | {} position(s)", user_lower, positions.len());
                 for p in &positions {
                     let slug = p.slug.as_deref().unwrap_or("?");
                     let outcome = p.outcome.as_deref().unwrap_or("?");
+                    let size_str = format!("{:.2}", p.size);
+                    let price_str = format!("{:.3}", p.cur_price);
                     web_state::push_trade(
                         web_state.clone(),
-                        "POS".to_string(),
-                        "—".to_string(),
-                        outcome.to_string(),
-                        format!("{:.2}", p.size),
-                        format!("{:.3}", p.cur_price),
-                        slug.to_string(),
-                        Some(user_lower.clone()),
-                        Some("loaded".to_string()),
+                        "POS",
+                        "—",
+                        outcome,
+                        &size_str,
+                        &price_str,
+                        slug,
+                        Some(user_lower.as_str()),
+                        Some("loaded"),
                     )
                     .await;
                     let _ = notify_tx.send(());

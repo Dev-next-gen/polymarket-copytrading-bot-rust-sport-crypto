@@ -80,3 +80,8 @@ tower = "0.4"
 async-stream = "0.3"
 tower-http = { version = "0.5", features = ["fs"] }
 dotenvy = "0.15"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1

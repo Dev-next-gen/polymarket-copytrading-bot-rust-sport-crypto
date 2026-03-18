@@ -1372,7 +1372,9 @@ impl PolymarketApi {
             anyhow::bail!("Invalid order_type: {}. Must be 'FOK' or 'FAK'", ot);
         }
         let is_buy = side == "BUY";
-        let amount_str = format!("{:.2}", amount);
+        // Keep higher precision so small but valid trades don't get rounded to "0.00"
+        // which would cause the CLOB SDK to reject/reinterpret the order amount.
+        let amount_str = format!("{:.8}", amount);
         if is_buy {
             if let Ok((usdc_balance, _)) = self.check_usdc_balance_allowance().await {
                 let need = rust_decimal::Decimal::from_str(&amount_str).unwrap_or(rust_decimal::Decimal::ZERO);
@@ -1433,7 +1435,7 @@ impl PolymarketApi {
                 });
                 continue;
             }
-            let amount_str = format!("{:.2}", amount);
+            let amount_str = format!("{:.8}", amount);
             let is_buy = *side == "BUY";
             match clob_sdk::post_market_order(handle, token_id, side, &amount_str, is_buy, ot) {
                 Ok(order_id) => out.push(OrderResponse {
@@ -1520,12 +1522,14 @@ impl PolymarketApi {
         const PAGE_SIZE: u32 = 500;
         const MAX_OFFSET: u32 = 10_000;
         let user = if user.starts_with("0x") { user.to_string() } else { format!("0x{}", user) };
-        let mut all = Vec::new();
+        let mut all = Vec::with_capacity(PAGE_SIZE as usize * 2);
         let mut offset = 0u32;
         while offset <= MAX_OFFSET {
+            let limit_str = PAGE_SIZE.to_string();
+            let offset_str = offset.to_string();
             let response = self.client
                 .get("https://data-api.polymarket.com/positions")
-                .query(&[("user", user.as_str()), ("limit", &PAGE_SIZE.to_string()), ("offset", &offset.to_string())])
+                .query(&[("user", user.as_str()), ("limit", &limit_str), ("offset", &offset_str)])
                 .send()
                 .await
                 .context("Failed to fetch positions")?;

@@ -111,26 +111,26 @@ pub async fn set_ui_config(state: SharedState, delta_highlight_sec: u64, delta_a
 
 pub async fn push_trade(
     state: SharedState,
-    tag: String,
-    side: String,
-    outcome: String,
-    size: String,
-    price: String,
-    slug: String,
-    target_address: Option<String>,
-    copy_status: Option<String>,
+    tag: &str,
+    side: &str,
+    outcome: &str,
+    size: &str,
+    price: &str,
+    slug: &str,
+    target_address: Option<&str>,
+    copy_status: Option<&str>,
 ) {
     let mut s = state.write().await;
     s.logs.push(TradeLog {
         time: chrono::Utc::now().to_rfc3339(),
-        tag,
-        side,
-        outcome,
-        size,
-        price,
-        slug,
-        target_address,
-        copy_status,
+        tag: tag.to_string(),
+        side: side.to_string(),
+        outcome: outcome.to_string(),
+        size: size.to_string(),
+        price: price.to_string(),
+        slug: slug.to_string(),
+        target_address: target_address.map(String::from),
+        copy_status: copy_status.map(String::from),
     });
     if s.logs.len() > MAX_LOGS {
         s.logs.remove(0);
@@ -139,9 +139,10 @@ pub async fn push_trade(
 
 pub async fn set_positions(
     state: SharedState,
-    user: String,
+    user: &str,
     positions: Vec<(String, String, f64, f64)>, // (slug, outcome, size, cur_price)
 ) {
+    let user = user.to_string();
     let mut prev: HashMap<String, f64> = HashMap::new();
     {
         let s = state.read().await;
@@ -157,7 +158,7 @@ pub async fn set_positions(
     for (slug, outcome, size, cur_price) in positions {
         let key = format!("{}|{}", slug, outcome);
         let prev_size = prev.get(&key).copied();
-        prev.insert(key.clone(), size);
+        prev.insert(key, size);
         let (delta, delta_at) = prev_size
             .map(|ps| {
                 let d = size - ps;
