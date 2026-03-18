@@ -10,35 +10,27 @@ use std::time::{Duration, Instant};
 #[command(name = "test_multiple_orders")]
 #[command(about = "Place multiple limit orders on Polymarket (sequential)")]
 struct Args {
-    /// Buy current BTC 15min market Up and Down tokens with $1 USD each (2 market orders)
     #[arg(long)]
     btc_1usd: bool,
 
-    /// Token ID (optional; if not set, discovers current BTC Up token; ignored if --btc-1usd)
     #[arg(long)]
     token_id: Option<String>,
 
-    /// Number of orders to place (ignored if --btc-1usd)
     #[arg(short('n'), long, default_value = "2")]
     count: u32,
 
-    /// Price in cents (e.g. 45 = $0.45) (ignored if --btc-1usd)
     #[arg(long, default_value = "45")]
     price_cents: u64,
 
-    /// Shares per order (ignored if --btc-1usd)
     #[arg(long, default_value = "1")]
     shares: u64,
 
-    /// Delay in ms between placing each order
     #[arg(long, default_value = "500")]
     delay_ms: u64,
 
-    /// Side: BUY or SELL (ignored if --btc-1usd)
     #[arg(long, default_value = "BUY")]
     side: String,
 
-    /// Config file path
     #[arg(short, long, default_value = "config.json")]
     config: String,
 }

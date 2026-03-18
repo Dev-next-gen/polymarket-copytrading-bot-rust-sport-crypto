@@ -11,35 +11,27 @@ use polymarket_trading_bot::clob_sdk;
 #[command(name = "test_allowance")]
 #[command(about = "Test allowance: setApprovalForAll (on-chain) and/or update_balance_allowance (cache refresh)")]
 struct Args {
-    /// Token ID to test (optional - if not provided, will scan portfolio and list all tokens)
     #[arg(short, long)]
     token_id: Option<String>,
     
-    /// Config file path
     #[arg(short, long, default_value = "config.json")]
     config: String,
     
-    /// Number of times to call update_balance_allowance (default: 1)
     #[arg(short, long, default_value = "1")]
     iterations: u32,
     
-    /// Delay between iterations in milliseconds (default: 500)
     #[arg(short, long, default_value = "500")]
     delay_ms: u64,
     
-    /// Scan portfolio and list all tokens with balance
     #[arg(long)]
     list: bool,
 
-    /// Run setApprovalForAll (on-chain) first, then run the update_balance_allowance test. Use this if allowance is 0 because approval was never set.
     #[arg(long)]
     approve: bool,
 
-    /// Only run setApprovalForAll (on-chain) and exit. Does not test update_balance_allowance.
     #[arg(long)]
     approve_only: bool,
 
-    /// Check all approvals (USDC + CTF) for all contracts (CTF Exchange, Neg Risk Exchange, Neg Risk Adapter). Similar to SDK's check_approvals example.
     #[arg(long)]
     check: bool,
 }

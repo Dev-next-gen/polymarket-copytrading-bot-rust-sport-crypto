@@ -30,7 +30,6 @@ fn first_buy_units_and_investment(base_shares: f64, price: f64) -> (f64, f64) {
     (units, investment)
 }
 
-/// Parse ISO 8601 end date to Unix timestamp. Returns None if unparseable.
 fn parse_end_date_iso(s: &str) -> Option<u64> {
     DateTime::parse_from_rfc3339(s)
         .ok()
@@ -57,14 +56,12 @@ async fn fetch_token_price(
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 enum SportsTrailingState {
-    /// Trail both tokens; buy the one that first satisfies ask >= lowest + trailing_stop.
     WaitingFirst {
         low0: f64,
         high0: f64,
         low1: f64,
         high1: f64,
     },
-    /// First buy in flight (skip updates until resolved).
     FirstBuyPending {
         first_is_token0: bool,
         first_price: f64,
@@ -75,14 +72,12 @@ enum SportsTrailingState {
         revert_low1: f64,
         revert_high1: f64,
     },
-    /// First token bought; trail opposite.
     FirstBought {
         first_is_token0: bool,
         first_price: f64,
         shares: f64,
         opposite_lowest: f64,
     },
-    /// Both bought for this round. If continuous, will reset to WaitingFirst.
     Done,
 }
 

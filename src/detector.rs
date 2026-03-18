@@ -6,21 +6,12 @@ use std::collections::HashMap;
 use tokio::sync::Mutex;
 use log::debug;
 
-/// Reset state for a token type after a buy-sell cycle
 #[derive(Debug, Clone, PartialEq)]
 enum ResetState {
-    /// Ready to buy - no reset needed or reset completed
     Ready,
-    /// Needs reset - price must drop below trigger_price before allowing another buy
     NeedsReset,
 }
 
-/// Detector for momentum-based trading strategy
-/// Strategy: Buy BTC/ETH tokens (BTC/ETH Up/Down) when price reaches trigger_price (0.9) after min_elapsed_minutes (10 minutes)
-/// Assumption: If price reaches 0.9 after 10 minutes, it's very likely to reach 1.0 by market close
-/// 
-/// Reset mechanism: After a successful buy-sell cycle, require price to drop below trigger_price
-/// before allowing another buy. This prevents buying immediately after selling when price only dips slightly.
 pub struct PriceDetector {
     trigger_price: f64, // Minimum price threshold to trigger buy (e.g., 0.9)
     max_buy_price: f64, // Maximum price to buy at (e.g., 0.95) - don't buy if price > this
@@ -80,7 +71,6 @@ impl TokenType {
         }
     }
     
-    /// Get the opposite token type (Up <-> Down)
     pub fn opposite(&self) -> TokenType {
         match self {
             TokenType::BtcUp => TokenType::BtcDown,
@@ -111,7 +101,6 @@ impl PriceDetector {
         }
     }
 
-    /// Check a single token for opportunity
     async fn check_token(
         &self,
         token: &crate::models::TokenPrice,
@@ -251,9 +240,6 @@ impl PriceDetector {
         })
     }
 
-    /// Detect momentum opportunities: Check BTC and ETH tokens (BTC/ETH Up/Down) for price >= trigger_price after min_elapsed_minutes
-    /// Strategy: Buy BTC/ETH token when price reaches 0.9 after 10 minutes have elapsed
-    /// Returns all matching opportunities so we can buy both ETH Down and BTC Down (and Up) when multiple qualify
     pub async fn detect_opportunities(&self, snapshot: &MarketSnapshot) -> Vec<BuyOpportunity> {
         let mut opportunities = Vec::new();
 
@@ -347,9 +333,6 @@ impl PriceDetector {
         opportunities
     }
 
-    /// Detect limit order opportunities: At min_elapsed_minutes, return both Up and Down tokens for limit buy orders
-    /// Strategy: Place limit buy orders for both tokens when min_elapsed_minutes have passed
-    /// This ignores price checks and max_buy_price/min_time_remaining_seconds
     pub async fn detect_limit_order_opportunities(&self, snapshot: &MarketSnapshot) -> Vec<BuyOpportunity> {
         let mut opportunities = Vec::new();
 
@@ -577,13 +560,11 @@ impl PriceDetector {
         opportunities
     }
 
-    /// Mark that we bought a specific token in this period
     pub async fn mark_token_bought(&self, token_id: String) {
         let mut bought = self.current_period_bought.lock().await;
         bought.insert(token_id);
     }
 
-    /// Reset when new period starts
     pub async fn reset_period(&self) {
         let mut bought = self.current_period_bought.lock().await;
         bought.clear();
@@ -592,8 +573,6 @@ impl PriceDetector {
         reset_states.clear();
     }
 
-    /// Clear limit order tracking for a specific period to allow re-entry after a sell
-    /// This is called when a limit sell order fills, allowing the bot to place new limit buy orders
     pub async fn clear_limit_order_tracking(&self, period_timestamp: u64) {
         let mut bought = self.current_period_bought.lock().await;
         let period_key = format!("{}_limit_orders", period_timestamp);
@@ -601,8 +580,6 @@ impl PriceDetector {
         eprintln!("🔄 Cleared limit order tracking for period {} - can re-enter if conditions met", period_timestamp);
     }
 
-    /// Mark that a buy-sell cycle completed for a token type
-    /// After this, the price must drop below trigger_price before allowing another buy
     pub async fn mark_cycle_completed(&self, token_type: TokenType) {
         let mut reset_states = self.reset_states.lock().await;
         reset_states.insert(token_type.clone(), ResetState::NeedsReset);

@@ -8,27 +8,21 @@ use polymarket_trading_bot::models::TokenPrice;
 #[command(name = "test_sell")]
 #[command(about = "Test selling tokens from your portfolio")]
 struct Args {
-    /// Token ID to sell (optional - if not provided, will scan portfolio and list all tokens)
     #[arg(short, long)]
     token_id: Option<String>,
     
-    /// Amount of shares to sell (optional - if not provided, will sell all available)
     #[arg(short, long)]
     shares: Option<f64>,
     
-    /// Config file path
     #[arg(short, long, default_value = "config.json")]
     config: String,
     
-    /// Just check portfolio without selling
     #[arg(long)]
     check_only: bool,
     
-    /// Scan portfolio and list all tokens with balance
     #[arg(long)]
     list: bool,
     
-    /// Sell all tokens in portfolio automatically
     #[arg(long)]
     sell_all: bool,
 }

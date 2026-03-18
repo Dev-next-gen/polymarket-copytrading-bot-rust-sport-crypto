@@ -7,7 +7,6 @@ use regex::Regex;
 use std::fs;
 use std::path::Path;
 
-/// Represents a price snapshot from history
 #[derive(Debug, Clone)]
 pub struct PriceSnapshot {
     pub timestamp: DateTime<chrono::Utc>,
@@ -30,7 +29,6 @@ pub struct PriceSnapshot {
     pub xrp_down_ask: Option<f64>,
 }
 
-/// Represents a position in backtest
 #[derive(Debug, Clone)]
 pub struct BacktestPosition {
     pub token_type: String, // "BTC_UP", "BTC_DOWN", etc.
@@ -39,7 +37,6 @@ pub struct BacktestPosition {
     pub purchase_time_remaining: u64, // seconds remaining when purchased
 }
 
-/// Results for a single period backtest
 #[derive(Debug, Clone)]
 pub struct PeriodResult {
     pub period_timestamp: u64,
@@ -50,7 +47,6 @@ pub struct PeriodResult {
     pub pnl: f64,
 }
 
-/// Aggregate backtest results
 #[derive(Debug)]
 pub struct BacktestResults {
     pub period_results: Vec<PeriodResult>,
@@ -62,8 +58,6 @@ pub struct BacktestResults {
     pub losing_periods: usize,
 }
 
-/// Parse a price line from history file
-/// Format: [TIMESTAMP] 📊 BTC: U$bid/$ask D$bid/$ask | ETH: U$bid/$ask D$bid/$ask | SOL: U$bid/$ask D$bid/$ask | XRP: U$bid/$ask D$bid/$ask | ⏱️  TIME_REMAINING
 fn parse_price_line(line: &str) -> Option<PriceSnapshot> {
     // Parse timestamp: [2026-01-27T21:30:02Z]
     let timestamp_re = Regex::new(r"\[([^\]]+)\]").ok()?;
@@ -228,7 +222,6 @@ fn parse_price_line(line: &str) -> Option<PriceSnapshot> {
     })
 }
 
-/// Load price history from a file
 pub fn load_price_history(file_path: &Path) -> Result<Vec<PriceSnapshot>> {
     let content = fs::read_to_string(file_path)
         .with_context(|| format!("Failed to read history file: {:?}", file_path))?;
@@ -247,9 +240,6 @@ pub fn load_price_history(file_path: &Path) -> Result<Vec<PriceSnapshot>> {
     Ok(snapshots)
 }
 
-/// Determine winner from final prices
-/// Winner is the token with ask price > 0.50 at the end
-/// Handles resolved state: $1.00/$0.00 means winner is $1.00 token
 fn determine_winner(final_snapshot: &PriceSnapshot, asset: &str) -> Option<bool> {
     match asset {
         "BTC" => {
@@ -334,7 +324,6 @@ fn determine_winner(final_snapshot: &PriceSnapshot, asset: &str) -> Option<bool>
     }
 }
 
-/// Run backtest for a single period
 pub fn backtest_period(
     snapshots: &[PriceSnapshot],
     period_timestamp: u64,
@@ -539,7 +528,6 @@ pub fn backtest_period(
     })
 }
 
-/// Run backtest on all history files
 pub fn run_backtest(config: &Config) -> Result<BacktestResults> {
     let history_dir = Path::new("history");
     if !history_dir.exists() {

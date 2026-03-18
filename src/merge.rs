@@ -1,10 +1,7 @@
 #[derive(Debug, Clone, PartialEq)]
 pub struct MergeResult {
-    /// Number of complete sets (min(up, down)).
     pub complete_sets: f64,
-    /// Remaining Up tokens that could not be paired.
     pub remaining_up: f64,
-    /// Remaining Down tokens that could not be paired.
     pub remaining_down: f64,
 }
 

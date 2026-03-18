@@ -52,8 +52,6 @@ impl Trader {
         })
     }
 
-    /// Place hedge sell orders: standard hedge = 5 orders (4 at $0.93, 1 at $0.98); early/individual = 1 order at $0.98.
-    /// Called from a background task after waiting 7 seconds.
     async fn place_hedge_sell_orders_with_retry(
         api: &PolymarketApi,
         pending_trades: &Arc<tokio::sync::Mutex<std::collections::HashMap<String, PendingTrade>>>,
@@ -173,8 +171,6 @@ impl Trader {
         }
     }
 
-    /// Get the opposite token ID for a given token type and condition ID
-    /// Returns the token ID of the opposite token (Up <-> Down)
     pub async fn get_opposite_token_id(&self, token_type: &TokenType, condition_id: &str) -> Result<String> {
         // Get market details to find the opposite token
         let market_details = self.api.get_market(condition_id).await?;
@@ -198,11 +194,6 @@ impl Trader {
         anyhow::bail!("Could not find opposite token for {} in market {}", token_type.display_name(), condition_id)
     }
     
-    /// Returns true if we have an unsold position of the same type (BTC or ETH) in this period
-    /// Note: 
-    /// - Trades with failed redemptions (redemption_abandoned = true) don't block new positions
-    /// - Only checks trades from the SAME period (different periods don't block each other)
-    /// - BTC positions don't block ETH buys, and vice versa
     pub async fn has_active_position(&self, period_timestamp: u64, token_type: crate::detector::TokenType) -> bool {
         let pending = self.pending_trades.lock().await;
         for (_, trade) in pending.iter() {
@@ -221,8 +212,6 @@ impl Trader {
         false
     }
     
-    /// Clean up old abandoned trades (trades from previous periods that failed redemption)
-    /// This prevents the pending_trades list from growing indefinitely
     pub async fn cleanup_old_abandoned_trades(&self, current_period_timestamp: u64) {
         let mut pending = self.pending_trades.lock().await;
         let mut to_remove = Vec::new();
@@ -245,8 +234,6 @@ impl Trader {
         drop(pending);
     }
 
-    /// Get hedge trades (individual or standard) for a given period.
-    /// Returns (condition_id, token_id, token_type) for each hedge position we hold.
     pub async fn get_hedge_trades_for_period(&self, period_timestamp: u64) -> Vec<(String, String, crate::detector::TokenType)> {
         let pending = self.pending_trades.lock().await;
         pending
@@ -260,15 +247,12 @@ impl Trader {
             .collect()
     }
 
-    /// Get a pending limit trade (keyed by `"{period}_{token_id}_limit"`)
     pub async fn get_pending_limit_trade(&self, period_timestamp: u64, token_id: &str) -> Option<PendingTrade> {
         let key = format!("{}_{}_limit", period_timestamp, token_id);
         let pending = self.pending_trades.lock().await;
         pending.get(&key).cloned()
     }
 
-    /// Get a pending limit trade by market (period, condition_id, token_type). Use this when the current
-    /// snapshot's token_id might differ from the token_id used when the order was placed (e.g. simulation).
     pub async fn get_pending_limit_trade_by_market(
         &self,
         period_timestamp: u64,
@@ -289,8 +273,6 @@ impl Trader {
         None
     }
 
-    /// List all pending limit trades for a period (key starts with "{period}_" and ends with "_limit").
-    /// Used in simulation to augment current_prices so tracker orders (placed with earlier token_id) can be filled.
     pub async fn get_pending_limit_trades_for_period(&self, period_timestamp: u64) -> Vec<PendingTrade> {
         let prefix = format!("{}_", period_timestamp);
         let pending = self.pending_trades.lock().await;
@@ -301,15 +283,12 @@ impl Trader {
             .collect()
     }
 
-    /// Get a pending re-entry limit trade (keyed by `"{period}_{token_id}_reentry_limit"`)
     pub async fn get_pending_reentry_limit_trade(&self, period_timestamp: u64, token_id: &str) -> Option<PendingTrade> {
         let key = format!("{}_{}_reentry_limit", period_timestamp, token_id);
         let pending = self.pending_trades.lock().await;
         pending.get(&key).cloned()
     }
 
-    /// Get a pending trade for (period, token_id) from any key: _limit, _individual_hedge, or _standard_hedge.
-    /// Used by dual-limit same-size low-price exit to find both the limit-filled side and the hedge (market-buy) side.
     pub async fn get_pending_trade_for_period_token(&self, period_timestamp: u64, token_id: &str) -> Option<PendingTrade> {
         let pending = self.pending_trades.lock().await;
         for suffix in &["_limit", "_individual_hedge", "_standard_hedge"] {
@@ -321,7 +300,6 @@ impl Trader {
         None
     }
 
-    /// Cancel a pending LIMIT BUY order for the given token/period and remove it from tracking
     pub async fn cancel_pending_limit_buy(&self, period_timestamp: u64, token_id: &str) -> Result<()> {
         let key = format!("{}_{}_limit", period_timestamp, token_id);
 
@@ -354,10 +332,6 @@ impl Trader {
         Ok(())
     }
 
-    /// After a market-order hedge for the unfilled side, mark the pending _limit trade for that token
-    /// as filled (confirmed_balance + buy_order_confirmed) so check_pending_trades does not later
-    /// Returns current token balance in shares (f64). None on API error or parse error.
-    /// Used to skip hedge market buy when we already have >= dual_limit_shares.
     pub async fn get_token_balance_shares(&self, token_id: &str) -> Option<f64> {
         match self.api.check_balance_only(token_id).await {
             Ok(balance) => {
@@ -368,9 +342,6 @@ impl Trader {
         }
     }
 
-    /// attribute the balance increase to a "limit fill" and log "LIMIT BUY ORDER FILLED" again.
-    /// Uses max(current_balance, existing t.units) for units so a stale/partial balance check
-    /// (e.g. right after market order when chain hasn't settled) does not understate the position.
     pub async fn mark_limit_trade_filled_by_hedge(&self, period_timestamp: u64, token_id: &str) {
         let key = format!("{}_{}_limit", period_timestamp, token_id);
         let current_balance = match self.api.check_balance_only(token_id).await {
@@ -397,9 +368,6 @@ impl Trader {
         }
     }
 
-    /// Sync pending trades with actual portfolio balance
-    /// Checks if tokens are still in portfolio - if balance is 0, mark as sold (already redeemed)
-    /// This prevents the bot from trying to redeem already-redeemed tokens
     pub async fn sync_trades_with_portfolio(&self) -> Result<()> {
         let pending_trades: Vec<(String, PendingTrade)> = {
             let pending = self.pending_trades.lock().await;
@@ -478,7 +446,6 @@ impl Trader {
         Ok(())
     }
 
-    /// Mark position as closed (for stop-loss re-entry)
     pub async fn mark_position_closed(&self, period_timestamp: u64) {
         let mut pending = self.pending_trades.lock().await;
         for (_, trade) in pending.iter_mut() {
@@ -489,8 +456,6 @@ impl Trader {
         }
     }
 
-    /// Execute buy when momentum opportunity is detected
-    /// Buys any token (BTC Up/Down, ETH Up/Down) when price reaches trigger_price after 10 minutes
     pub async fn execute_buy(&self, opportunity: &BuyOpportunity) -> Result<()> {
         // Safety check: Verify time remaining is still sufficient before executing buy
         // This acts as a double-check in case market closed between detection and execution
@@ -1119,10 +1084,6 @@ impl Trader {
         Ok(())
     }
 
-    /// Execute limit buy order - places limit buy for both Up and Down tokens
-    /// When a buy order fills, immediately places ONE limit sell order at sell_price (profit target)
-    /// Stop-loss is disabled for limit order version
-    /// If is_reentry is true, the order is tracked under _reentry_limit key (so it does not overwrite the original 0.45 fill).
     pub async fn execute_limit_buy(
         &self,
         opportunity: &BuyOpportunity,
@@ -1306,8 +1267,6 @@ impl Trader {
         Ok(())
     }
 
-    /// Place multiple limit buy orders in one batch request. Uses the same limit price and size for all.
-    /// Returns one OrderResponse per opportunity in the same order; success is when message starts with "Order ID:".
     pub async fn execute_limit_buy_batch(
         &self,
         opportunities: &[BuyOpportunity],
@@ -1421,9 +1380,6 @@ impl Trader {
         Ok(responses)
     }
 
-    /// In simulation mode: sync pending_trades so that any limit order that the simulation tracker
-    /// has marked filled (has a position) is reflected as buy_order_confirmed in pending_trades.
-    /// Call this after check_limit_orders so that the same snapshot sees the updated fill state.
     pub async fn sync_pending_trades_from_simulation(&self) -> Result<()> {
         if !self.simulation_mode {
             return Ok(());
@@ -1449,8 +1405,6 @@ impl Trader {
         Ok(())
     }
 
-    /// Check pending trades and sell when price reaches sell_price (0.99 or 1.0)
-    /// Also handles limit order fills: detects when limit buy orders fill and places limit sell orders
     pub async fn check_pending_trades(&self) -> Result<()> {
         // In simulation mode, check limit orders against current prices
         if self.simulation_mode {
@@ -3084,10 +3038,6 @@ impl Trader {
         Ok(())
     }
 
-    /// Execute sell order with configurable order type
-    /// order_type: None or "FAK" for Fill-and-Kill (allows partial fills), "FOK" for Fill-or-Kill
-    /// Default: FAK (allows partial fills, better for limited liquidity situations)
-    /// is_stop_loss: true if this is a stop-loss sell, false if it's a profit sell
     async fn execute_sell(
         &self,
         _trade_key: &str,
@@ -3322,8 +3272,6 @@ impl Trader {
         Ok(())
     }
 
-    /// Check and settle trades when markets close
-    /// For momentum strategy: If token wasn't sold, it will be worth $1 if Up won, $0 if Down won
     pub async fn check_market_closure(&self) -> Result<()> {
         // In simulation mode, check simulation tracker positions for market closure
         if self.simulation_mode {
@@ -3806,7 +3754,6 @@ impl Trader {
         Ok((is_closed, is_winner))
     }
 
-    /// Redeem tokens using trade data directly (avoids lookup issues)
     async fn redeem_token_by_id_with_trade(&self, trade: &PendingTrade) -> Result<()> {
         // Determine outcome string based on token type
         // For Up/Down markets: Up = "Up", Down = "Down"
@@ -3845,7 +3792,6 @@ impl Trader {
         }
     }
     
-    /// Legacy method - kept for compatibility but uses trade lookup
     async fn redeem_token_by_id(&self, token_id: &str, _units: f64) -> Result<()> {
         // Get the condition ID and outcome from the token
         // We need to find which trade this token belongs to
@@ -3860,15 +3806,10 @@ impl Trader {
         self.redeem_token_by_id_with_trade(&trade).await
     }
 
-    /// Reset for new period (detector state is reset elsewhere).
-    /// We do NOT remove pending trades here: unsold/unredeemed positions from the previous
-    /// period must stay in pending_trades so check_market_closure can redeem them. Removing
-    /// them would cause the bot to never redeem winning tokens from the just-closed period.
     pub async fn reset_period(&self, _old_period: u64) {
         // No-op: keep all pending trades until sold or redemption_abandoned (cleanup_old_abandoned_trades).
     }
 
-    /// Print summary of all trades (for testing/verification)
     pub async fn print_trade_summary(&self) {
         // In simulation mode, print simulation position summary
         if self.simulation_mode {

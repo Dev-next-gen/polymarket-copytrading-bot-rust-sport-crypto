@@ -17,40 +17,26 @@ use polymarket_trading_bot::monitor::MarketMonitor;
 use polymarket_trading_bot::detector::{BuyOpportunity, TokenType};
 use polymarket_trading_bot::trader::Trader;
 
-/// Only start trailing when at least one token's price is in this range (market "near 0.5"). If no token is in range, wait; if market ends without match, next 15m market starts fresh.
 const NEAR_HALF_MIN: f64 = 0.48;
 const NEAR_HALF_MAX: f64 = 0.52;
-/// Only start trailing when a token's price is under this. If trailed price goes above this without triggering, reset and wait again.
 const TRAILING_ENTRY_MAX_PRICE: f64 = 0.45;
-/// Trigger (lowest + trailing_stop_point) above this is ignored; lowest is set to this and trailing continues.
 const TRAILING_TRIGGER_CAP: f64 = 0.45;
 const STOP_LOSS_BUFFER: f64 = 0.1;
-/// Minimum total cost for first buy (USD). If under this, we increase units so cost >= this.
 const MIN_FIRST_BUY_COST: f64 = 1.0;
 
-/// Returns (units, investment) so that investment = units * price >= MIN_FIRST_BUY_COST and units >= base_shares.
-/// Rounds units up to 2 decimals for API.
 fn first_buy_units_and_investment(base_shares: f64, price: f64) -> (f64, f64) {
     let min_units = (MIN_FIRST_BUY_COST / price).max(base_shares);
     let units = (min_units * 100.0).ceil() / 100.0;
     let investment = units * price;
     (units, investment)
 }
-/// 2-min / 4-min boundaries for second-token time windows.
 const TRAILING_HEDGE_ELAPSED_SECONDS: u64 = 120;
 const FOUR_MIN_ELAPSED_SECONDS: u64 = 240;
-/// Slug segment to avoid Rust 2021 string literal parsing (no "- after quote).
 const SLUG_MID: &str = concat!("-", "updown-15m-");
 
-/// Time windows for second token are from first-buy time (not market start).
 const SECONDS_2MIN_FROM_FIRST_BUY: u64 = 120;
 const SECONDS_4MIN_FROM_FIRST_BUY: u64 = 240;
 
-/// Returns true if opposite_price is below the ceiling for the current time-since-first-buy.
-/// Stop loss is handled separately (always buys); this is only for trailing trigger.
-/// - Within 2 min of first buy: opposite < (1 - first_bought - 0.05)
-/// - Within 4 min of first buy: opposite < (1 - first_bought)
-/// - After early_hedge_minutes from first buy: opposite < (1 - first_bought)
 fn second_token_meets_price_ceiling(
     first_bought_price: f64,
     seconds_since_first_buy: u64,
@@ -69,7 +55,6 @@ fn second_token_meets_price_ceiling(
     opposite_price < ceiling
 }
 
-/// Human-readable description of the ceiling for the current time-since-first-buy (for skip logs).
 fn second_token_ceiling_desc(
     first_bought_price: f64,
     seconds_since_first_buy: u64,
@@ -87,7 +72,6 @@ fn second_token_ceiling_desc(
     format!("{} requires opposite price < {:.4}", label, ceiling)
 }
 
-/// Returns human-readable time-window label for trailing-stop logs.
 fn trailing_window_label(
     time_elapsed: u64,
     early_hedge_after_seconds: u64,
@@ -106,14 +90,10 @@ fn trailing_window_label(
     }
 }
 
-/// Per-market state for the trailing strategy.
 #[derive(Debug, Clone)]
 enum TrailingState {
-    /// We've seen at least one token in [0.48, 0.52] for this market; waiting for one token to go under 0.45 to start trailing.
     WaitingForUnder45,
-    /// Monitoring the token currently under 0.5; buy when price >= lowest + trailing_stop, but ignore trigger if price > highest (avoid buying at new high).
     MonitoringFirst { target_is_up: bool, lowest: f64, highest: f64 },
-    /// First buy order in flight; next snapshots skip until we replace with FirstBought or revert to MonitoringFirst. Prevents duplicate first buys and allows second-token monitoring to start as soon as we insert FirstBought after success.
     FirstBuyPending {
         first_was_up: bool,
         first_price: f64,
@@ -124,7 +104,6 @@ enum TrailingState {
         revert_lowest: f64,
         revert_highest: f64,
     },
-    /// First token bought; monitoring opposite with stop loss and trailing stop. Time windows for second token are from first_buy_time_elapsed.
     FirstBought {
         first_was_up: bool,
         first_price: f64,
@@ -132,11 +111,9 @@ enum TrailingState {
         opposite_lowest: f64,
         first_buy_time_elapsed: u64,
     },
-    /// Both tokens bought; record to history and stop acting.
     Done,
 }
 
-/// Ask price for recording and calculation (we buy at ask). Falls back to bid if ask missing.
 fn ask_f64(token: &polymarket_trading_bot::models::TokenPrice) -> f64 {
     token
         .ask
@@ -160,7 +137,6 @@ fn token_type_for(market_name: &str, is_up: bool) -> TokenType {
     }
 }
 
-/// Append one JSON line to history/trailing_trades.jsonl
 fn record_trailing_trade(
     history_path: &str,
     period_timestamp: u64,

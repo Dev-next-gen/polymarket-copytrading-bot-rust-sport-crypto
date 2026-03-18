@@ -63,7 +63,6 @@ fn default_port() -> u16 {
 #[derive(Debug, Clone, Default, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct CopySection {
-    /// Single address or list (target_address / target_addresses)
     #[serde(alias = "target_address", alias = "target_addresses")]
     pub target_addresses: Option<toml::Value>,
     #[serde(default = "default_true")]
@@ -112,7 +111,6 @@ impl CopyTradingConfig {
         toml::from_str(&s).context("Failed to parse trade.toml")
     }
 
-    /// Resolve target_addresses to a Vec<String> (supports target_address = "0x..." or target_addresses = ["0x...", ...]).
     pub fn target_addresses(&self) -> Vec<String> {
         let raw = match self.copy.target_addresses.as_ref() {
             Some(v) => v.clone(),
@@ -148,7 +146,6 @@ pub struct LeaderTrade {
 
 // ---------- Filter ----------
 
-/// Returns true if the trade passes filters and should be copied.
 pub fn should_copy_trade(config: &CopyTradingConfig, trade: &LeaderTrade) -> bool {
     if trade.side == "SELL" && !config.copy.revert_trade {
         return false;
@@ -183,7 +180,6 @@ pub fn should_copy_trade(config: &CopyTradingConfig, trade: &LeaderTrade) -> boo
 
 // ---------- Copy trade (place market order) ----------
 
-/// Copy one leader trade: compute amount (with multiplier and buy cap), then place FOK market order.
 pub async fn copy_trade(
     api: &PolymarketApi,
     trade: &LeaderTrade,
@@ -296,10 +292,8 @@ pub fn position_snapshot(p: &DataApiPosition) -> PositionSnapshot {
     }
 }
 
-/// Map of asset_id -> snapshot. Store per-user for polling diff.
 pub type SnapshotMap = HashMap<String, PositionSnapshot>;
 
-/// Build snapshot map from Data API positions (for diff_to_trades).
 pub fn build_snapshot_map(positions: &[DataApiPosition]) -> SnapshotMap {
     let mut m = HashMap::new();
     for p in positions {
@@ -308,7 +302,6 @@ pub fn build_snapshot_map(positions: &[DataApiPosition]) -> SnapshotMap {
     m
 }
 
-/// Build leader trades from position diff (curr vs prev).
 pub fn diff_to_trades(
     user: &str,
     curr: &HashMap<String, PositionSnapshot>,

@@ -33,17 +33,12 @@ pub struct MarketMonitor {
     simulation_mode: bool,
     price_monitor_file: Option<Arc<tokio::sync::Mutex<std::fs::File>>>, // File for logging price monitoring data in simulation mode
     market_price_files: Arc<tokio::sync::Mutex<std::collections::HashMap<String, Arc<tokio::sync::Mutex<std::fs::File>>>>>, // Per-market price files
-    /// Period duration in seconds (e.g. 900 for 15m, 300 for 5m). Used for time_remaining fallback and period rounding.
     period_seconds: u64,
-    /// If false, omit ETH from the one-line price log (efficient logging when ETH trading disabled).
     log_enable_eth: bool,
     log_enable_solana: bool,
     log_enable_xrp: bool,
-    /// Current Chainlink BTC/USD from RTDS (optional). When set, price line shows BTC price, price-to-beat, and diff.
     chainlink_btc: Option<Arc<tokio::sync::Mutex<Option<f64>>>>,
-    /// Per-period Chainlink price at first sight (used as "price to beat" for logging).
     price_to_beat_cache: Option<Arc<tokio::sync::Mutex<std::collections::HashMap<u64, f64>>>>,
-    /// Optional trailing status string (e.g. "trail: Up low=0.41 trig=0.44 band=0.50"). When set by the binary, appended to the price line.
     trailing_status_line: Option<Arc<tokio::sync::Mutex<String>>>,
 }
 
@@ -59,10 +54,6 @@ pub struct MarketSnapshot {
 }
 
 impl MarketMonitor {
-    /// Create a new MarketMonitor.
-    /// enable_eth_trading, enable_solana_trading, enable_xrp_trading: if Some(false), that market is omitted from the one-line price log.
-    /// chainlink_btc: when Some(arc), the price line will include Chainlink BTC price, price-to-beat (at period start), and difference.
-    /// trailing_status_line: when Some(arc), the price line will append the string (e.g. trailing lowest/trigger/band for 5m BTC).
     pub fn new(
         api: Arc<PolymarketApi>,
         eth_market: crate::models::Market,
@@ -142,7 +133,6 @@ impl MarketMonitor {
         })
     }
 
-    /// Update markets when a new period starts
     pub async fn update_markets(&self, eth_market: crate::models::Market, btc_market: crate::models::Market, solana_market: crate::models::Market, xrp_market: crate::models::Market) -> Result<()> {
         eprintln!("🔄 Updating to new 15-minute period markets...");
         eprintln!("✅ ETH Market: {} ({}) - Active trading", eth_market.slug, eth_market.condition_id);
@@ -187,14 +177,12 @@ impl MarketMonitor {
     }
 
 
-    /// Get current market condition IDs (for checking if markets are closed)
     pub async fn get_current_condition_ids(&self) -> (String, String) {
         let eth = self.eth_market.lock().await.condition_id.clone();
         let btc = self.btc_market.lock().await.condition_id.clone();
         (eth, btc)
     }
 
-    /// Get the current market's timestamp from the BTC market slug
     pub async fn get_current_market_timestamp(&self) -> u64 {
         let btc_market = self.btc_market.lock().await;
         let timestamp = Self::extract_timestamp_from_slug(&btc_market.slug);
@@ -210,7 +198,6 @@ impl MarketMonitor {
         }
     }
 
-    /// Refresh market data once per period (15 minutes) to get token IDs
     async fn refresh_market_tokens(&self) -> Result<()> {
         // Check if we need to refresh (once per period)
         let should_refresh = {
@@ -324,8 +311,6 @@ impl MarketMonitor {
         Ok(())
     }
 
-    /// Fetch current market data for both ETH and BTC markets
-    /// Uses get_price() endpoint continuously for real-time prices
     pub async fn fetch_market_data(&self) -> Result<MarketSnapshot> {
         // Refresh token IDs if needed (once per 15-minute period)
         self.refresh_market_tokens().await?;
@@ -754,8 +739,6 @@ impl MarketMonitor {
         }
     }
 
-    /// Fetch resolved prices when market is closed
-    /// Returns prices based on market resolution: winner = $1.00, loser = $0.00
     async fn fetch_resolved_prices(&self, condition_id: &str) -> (Option<TokenPrice>, Option<TokenPrice>) {
         match self.api.get_market(condition_id).await {
             Ok(market) => {
@@ -809,7 +792,6 @@ impl MarketMonitor {
         }
     }
 
-    /// Extract timestamp from market slug (e.g., "eth-updown-15m-1767796200" -> 1767796200)
     pub fn extract_timestamp_from_slug(slug: &str) -> u64 {
         // Slug format: {asset}-updown-15m-{timestamp}
         // Try to extract the timestamp (last number after the last dash)
@@ -822,8 +804,6 @@ impl MarketMonitor {
         0
     }
 
-    /// Start monitoring markets continuously
-    /// Returns a callback function that can be used to update markets when new period starts
     pub async fn start_monitoring<F, Fut>(&self, callback: F)
     where
         F: Fn(MarketSnapshot) -> Fut + Send + Sync + 'static,

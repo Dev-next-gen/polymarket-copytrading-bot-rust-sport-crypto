@@ -8,8 +8,6 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 const RTDS_URL: &str = "wss://ws-live-data.polymarket.com";
 const RECONNECT_DELAY_SECS: u64 = 5;
 
-/// Spawn a background task that keeps the latest Chainlink BTC/USD price in `out`.
-/// On each RTDS update, sets *out = Some(value). Reconnects on disconnect.
 pub fn spawn_chainlink_btc_task(out: Arc<Mutex<Option<f64>>>) {
     tokio::spawn(async move {
         loop {

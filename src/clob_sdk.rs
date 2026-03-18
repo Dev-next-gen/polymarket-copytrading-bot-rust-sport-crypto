@@ -136,7 +136,6 @@ pub fn contract_config(chain_id: u64, is_neg_risk: bool) -> Result<Option<Contra
     }))
 }
 
-/// Ensure the SDK .so is loaded and return POLYGON chain id. Use this where the bot currently uses POLYGON.
 pub fn polygon() -> u64 {
     polygon_chain_id()
 }
@@ -149,9 +148,6 @@ fn copy_rust_to_c(s: &str) -> Result<CString> {
     CString::new(s).context("CString from Rust string")
 }
 
-/// Create authenticated CLOB client. Returns handle (non-zero) on success.
-/// funder: None for EOA; Some(proxy_wallet_address) for proxy/safe.
-/// signature_type: 0 = Eoa, 1 = Proxy, 2 = GnosisSafe.
 pub fn client_create(
     clob_url: &str,
     private_key_hex: &str,
@@ -284,7 +280,6 @@ pub fn post_limit_order(
     Ok(String::from_utf8_lossy(unsafe { std::slice::from_raw_parts(order_id_buf.as_ptr() as *const u8, len) }).into_owned())
 }
 
-/// Post market order. amount_is_usdc: true = amount in USDC, false = amount in shares. order_type: "FOK" or "FAK".
 pub fn post_market_order(
     handle: u64,
     token_id: &str,
@@ -396,7 +391,6 @@ pub fn balance_allowance(
     Ok((balance, allowance))
 }
 
-/// Update balance/allowance cache. asset_type: "Collateral" or "Conditional".
 pub fn update_balance_allowance(handle: u64, token_id: &str, asset_type: &str) -> Result<()> {
     let lib = load_lib()?;
     let f: libloading::Symbol<

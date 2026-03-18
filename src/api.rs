@@ -58,7 +58,6 @@ pub struct DataApiPosition {
     pub outcome: Option<String>,
 }
 
-/// Polygon chain ID from clob_sdk (137).
 fn polygon() -> u64 {
     clob_sdk::polygon()
 }
@@ -197,7 +196,6 @@ impl PolymarketApi {
         }
     }
 
-    /// Authenticate with Polymarket CLOB API at startup (creates CLOB client via clob_sdk).
     pub async fn authenticate(&self) -> Result<()> {
         let _ = self.ensure_clob_client().await?;
         *self.authenticated.lock().await = true;
@@ -212,7 +210,6 @@ impl PolymarketApi {
         Ok(())
     }
 
-    /// Generate HMAC-SHA256 signature for authenticated requests
     fn generate_signature(
         &self,
         method: &str,
@@ -257,8 +254,6 @@ impl PolymarketApi {
         Ok(signature)
     }
 
-    /// Builder Relayer HMAC: message = timestamp(ms) + method + path + body, signature = base64url.
-    /// Must match Polymarket builder-signing-sdk for relayer auth.
     fn builder_relayer_signature(
         api_secret: &str,
         timestamp_ms: u64,
@@ -287,7 +282,6 @@ impl PolymarketApi {
         Ok(general_purpose::URL_SAFE.encode(sig.as_slice()))
     }
 
-    /// Add authentication headers to a request
     fn add_auth_headers(
         &self,
         request: reqwest::RequestBuilder,
@@ -316,7 +310,6 @@ impl PolymarketApi {
         Ok(request)
     }
 
-    /// Get all active markets (using events endpoint)
     pub async fn get_all_active_markets(&self, limit: u32) -> Result<Vec<Market>> {
         let url = format!("{}/events", self.gamma_url);
         let limit_str = limit.to_string();
@@ -372,7 +365,6 @@ impl PolymarketApi {
         Ok(all_markets)
     }
 
-    /// Get market by slug
     pub async fn get_market_by_slug(&self, slug: &str) -> Result<Market> {
         let url = format!("{}/events/slug/{}", self.gamma_url, slug);
         
@@ -401,7 +393,6 @@ impl PolymarketApi {
         anyhow::bail!("Invalid market response format: no markets array found")
     }
 
-    /// Get order book for a specific token
     pub async fn get_orderbook(&self, token_id: &str) -> Result<OrderBook> {
         let url = format!("{}/book", self.clob_url);
         let params = [("token_id", token_id)];
@@ -422,7 +413,6 @@ impl PolymarketApi {
         Ok(orderbook)
     }
 
-    /// Get market details by condition ID
     pub async fn get_market(&self, condition_id: &str) -> Result<MarketDetails> {
         let url = format!("{}/markets/{}", self.clob_url, condition_id);
 
@@ -451,8 +441,6 @@ impl PolymarketApi {
         Ok(market)
     }
 
-    /// Get price for a token (for trading)
-    /// side: "BUY" or "SELL"
     pub async fn get_price(&self, token_id: &str, side: &str) -> Result<rust_decimal::Decimal> {
         let url = format!("{}/price", self.clob_url);
         let params = [
@@ -492,7 +480,6 @@ impl PolymarketApi {
         Ok(price)
     }
 
-    /// Get best bid/ask prices for a token (from orderbook)
     pub async fn get_best_price(&self, token_id: &str) -> Result<Option<TokenPrice>> {
         let orderbook = self.get_orderbook(token_id).await?;
         
@@ -525,7 +512,6 @@ impl PolymarketApi {
         })
     }
 
-    /// Place multiple limit orders (one post_limit_order per order via clob_sdk).
     pub async fn place_limit_orders(&self, orders: &[OrderRequest]) -> Result<Vec<OrderResponse>> {
         if orders.is_empty() {
             return Ok(Vec::new());
@@ -562,7 +548,6 @@ impl PolymarketApi {
         Ok(out)
     }
 
-    /// Cancel a specific order by order id (CLOB). Uses REST DELETE with HMAC auth (clob_sdk has no cancel).
     pub async fn cancel_order(&self, order_id: &str) -> Result<()> {
         let path = "/order";
         let url = format!("{}{}", self.clob_url, path);
@@ -582,8 +567,6 @@ impl PolymarketApi {
         Ok(())
     }
 
-    /// Discover current BTC or ETH 15-minute market
-    /// Similar to main bot's discover_market function
     pub async fn discover_current_market(&self, asset: &str) -> Result<Option<String>> {
         let current_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -619,9 +602,6 @@ impl PolymarketApi {
         Ok(None)
     }
 
-    /// Get all tokens in portfolio with balance > 0
-    /// Get all tokens in portfolio with balance > 0, checking recent markets (not just current)
-    /// Uses REDEEM_SCAN_PERIODS and a delay between requests to avoid 429 rate limits.
     pub async fn get_portfolio_tokens_all(&self, _btc_condition_id: Option<&str>, _eth_condition_id: Option<&str>) -> Result<Vec<(String, f64, String, String)>> {
         const REDEEM_SCAN_PERIODS: u32 = 24; // 24 × 15 min = 6 hours (fewer requests to avoid 429)
         const DELAY_BETWEEN_PERIODS_MS: u64 = 200; // Delay between each period check to avoid rate limits
@@ -745,7 +725,6 @@ impl PolymarketApi {
         Ok(tokens_with_balance)
     }
 
-    /// Automatically discovers current BTC and ETH markets if condition IDs are not provided
     pub async fn get_portfolio_tokens(&self, btc_condition_id: Option<&str>, eth_condition_id: Option<&str>) -> Result<Vec<(String, f64, String)>> {
         let mut tokens_with_balance = Vec::new();
         
@@ -852,8 +831,6 @@ impl PolymarketApi {
         Ok(tokens_with_balance)
     }
 
-    /// Check USDC balance and allowance for buying tokens (via clob_sdk).
-    /// Returns (usdc_balance, usdc_allowance) as Decimal values.
     pub async fn check_usdc_balance_allowance(&self) -> Result<(rust_decimal::Decimal, rust_decimal::Decimal)> {
         let handle = self.ensure_clob_client().await?;
         let (balance_str, allowance_str) = clob_sdk::balance_allowance(handle, "", "Collateral")?;
@@ -862,14 +839,12 @@ impl PolymarketApi {
         Ok((balance, allowance))
     }
 
-    /// Check token balance only (for redemption/portfolio scanning) via clob_sdk.
     pub async fn check_balance_only(&self, token_id: &str) -> Result<rust_decimal::Decimal> {
         let handle = self.ensure_clob_client().await?;
         let (balance_str, _) = clob_sdk::balance_allowance(handle, token_id, "Conditional")?;
         rust_decimal::Decimal::from_str(balance_str.trim()).context("Failed to parse balance")
     }
 
-    /// Check token balance and allowance before selling (via clob_sdk).
     pub async fn check_balance_allowance(&self, token_id: &str) -> Result<(rust_decimal::Decimal, rust_decimal::Decimal)> {
         let handle = self.ensure_clob_client().await?;
         let (balance_str, allowance_str) = clob_sdk::balance_allowance(handle, token_id, "Conditional")?;
@@ -890,13 +865,11 @@ impl PolymarketApi {
         Ok((balance, allowance))
     }
 
-    /// Refresh cached allowance for outcome token before selling (via clob_sdk).
     pub async fn update_balance_allowance_for_sell(&self, token_id: &str) -> Result<()> {
         let handle = self.ensure_clob_client().await?;
         clob_sdk::update_balance_allowance(handle, token_id, "Conditional")
     }
 
-    /// Get the CLOB contract address for Polygon (from clob_sdk contract_config).
     fn get_clob_contract_address(&self) -> Result<String> {
         let config = clob_sdk::contract_config(polygon(), false)
             .context("Failed to get contract config")?
@@ -904,7 +877,6 @@ impl PolymarketApi {
         Ok(format!("{:#x}", config.exchange))
     }
 
-    /// Get the CTF contract address for Polygon (from clob_sdk contract_config).
     fn get_ctf_contract_address(&self) -> Result<String> {
         let config = clob_sdk::contract_config(polygon(), false)
             .context("Failed to get contract config")?
@@ -912,7 +884,6 @@ impl PolymarketApi {
         Ok(format!("{:#x}", config.conditional_tokens))
     }
 
-    /// Check if setApprovalForAll was already set for the Exchange contract
     pub async fn check_is_approved_for_all(&self) -> Result<bool> {
         let config = clob_sdk::contract_config(polygon(), false)
             .context("Failed to load contract config")?
@@ -948,7 +919,6 @@ impl PolymarketApi {
         Ok(approved)
     }
 
-    /// Check all approvals for all contracts. Returns (contract_name, usdc_approved, ctf_approved).
     pub async fn check_all_approvals(&self) -> Result<Vec<(String, bool, bool)>> {
         const RPC_URL: &str = "https://polygon-rpc.com";
         const USDC_ADDRESS_STR: &str = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174";
@@ -1006,16 +976,6 @@ impl PolymarketApi {
         Ok(results)
     }
 
-    /// Approve the CLOB contract for ALL conditional tokens using CTF contract's setApprovalForAll()
-    /// This is the recommended way to avoid allowance errors for all tokens at once
-    /// Based on SDK example: https://github.com/Polymarket/rs-clob-client/blob/main/examples/approvals.rs
-    /// 
-    /// For proxy wallets: Uses Polymarket's relayer to execute the transaction (gasless)
-    /// For EOA wallets: Uses direct RPC call
-    /// 
-    /// IMPORTANT: The wallet that needs MATIC for gas:
-    /// - If using proxy_wallet_address: Uses relayer (gasless, no MATIC needed)
-    /// - If NOT using proxy_wallet_address: The wallet derived from private_key needs MATIC
     pub async fn set_approval_for_all_clob(&self) -> Result<()> {
         let config = clob_sdk::contract_config(polygon(), false)
             .context("Failed to load contract config")?
@@ -1084,13 +1044,6 @@ impl PolymarketApi {
         }
     }
     
-    /// Set approval for all tokens via Polymarket relayer (for proxy wallets)
-    /// Based on: https://docs.polymarket.com/developers/builders/relayer-client
-    /// 
-    /// NOTE: For signature_type 2 (GNOSIS_SAFE), the relayer expects a complex Safe transaction format
-    /// with nonce, Safe address derivation, struct hash signing, etc. This implementation uses a
-    /// simpler format that may work for signature_type 1 (POLY_PROXY). If you get 400/401 errors
-    /// with signature_type 2, the full Safe transaction flow needs to be implemented.
     async fn set_approval_for_all_via_relayer(
         &self,
         ctf_contract_address: AlloyAddress,
@@ -1237,8 +1190,6 @@ impl PolymarketApi {
         Ok(())
     }
     
-    /// Wait for relayer transaction to be confirmed (like TypeScript SDK's response.wait())
-    /// Polls the relayer status endpoint until transaction reaches STATE_CONFIRMED or STATE_FAILED
     async fn wait_for_relayer_transaction(&self, transaction_id: &str) -> Result<String> {
         // Based on TypeScript SDK pattern: response.wait() returns transactionHash
         // Relayer states: STATE_NEW, STATE_EXECUTED, STATE_MINE, STATE_CONFIRMED, STATE_FAILED, STATE_INVALID
@@ -1314,9 +1265,6 @@ impl PolymarketApi {
         }
     }
 
-    /// Fallback: Approve individual tokens (ETH Up/Down, BTC Up/Down) with large allowance
-    /// This is used when setApprovalForAll fails via relayer
-    /// Triggers SDK auto-approval by placing tiny test sell orders for each token
     pub async fn approve_individual_tokens(&self, eth_market_data: &crate::models::Market, btc_market_data: &crate::models::Market) -> Result<()> {
         eprintln!("🔄 Fallback: Approving individual tokens with large allowance...");
         
@@ -1466,7 +1414,6 @@ impl PolymarketApi {
         unreachable!()
     }
 
-    /// Place multiple market orders (one post_market_order per order via clob_sdk).
     pub async fn place_market_orders(
         &self,
         orders: &[(&str, f64, &str, Option<&str>)], // (token_id, amount, side, order_type)
@@ -1507,10 +1454,6 @@ impl PolymarketApi {
         Ok(out)
     }
     
-    /// Place an order using REST API with HMAC authentication (fallback method)
-    /// 
-    /// NOTE: This is a fallback method. The main place_order() method uses the official SDK
-    /// with proper private key signing. Use this only if SDK integration fails.
     #[allow(dead_code)]
     async fn place_order_hmac(&self, order: &OrderRequest) -> Result<OrderResponse> {
         let path = "/orders";
@@ -1631,8 +1574,6 @@ impl PolymarketApi {
         Ok(all)
     }
 
-    /// Fetch redeemable position condition IDs from Data API (user=wallet, redeemable=true).
-    /// Only includes positions where the wallet holds tokens (size > 0).
     pub async fn get_redeemable_positions(&self, wallet: &str) -> Result<Vec<String>> {
         let url = "https://data-api.polymarket.com/positions";
         let user = if wallet.starts_with("0x") {
@@ -1668,12 +1609,6 @@ impl PolymarketApi {
         Ok(condition_ids)
     }
 
-    /// Redeem winning conditional tokens after market resolution
-    /// 
-    /// This uses the CTF (Conditional Token Framework) contract to redeem winning tokens
-    /// Derive the Gnosis Safe (proxy wallet) address for Polygon from the EOA signer.
-    /// Matches TypeScript deriveSafe: getCreate2Address(factory, salt, initCodeHash).
-    /// Constants from builder-relayer-client: SafeFactory, SAFE_INIT_CODE_HASH.
     fn derive_safe_address_polygon(eoa: &AlloyAddress) -> AlloyAddress {
         const SAFE_FACTORY_POLYGON: [u8; 20] = [
             0xaa, 0xcf, 0xee, 0xa0, 0x3e, 0xb1, 0x56, 0x1c, 0x4e, 0x67,
@@ -1697,18 +1632,6 @@ impl PolymarketApi {
         AlloyAddress::from_slice(&hash[12..32])
     }
 
-    /// for USDC at 1:1 ratio after market resolution.
-    /// 
-    /// Parameters:
-    /// - condition_id: The condition ID of the resolved market
-    /// - token_id: The token ID of the winning token (used to determine index_set)
-    /// - outcome: "Up" or "Down" to determine the index set
-    /// 
-    /// Reference: Polymarket CTF redemption using SDK
-    /// USDC collateral address: 0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174
-    /// 
-    /// Note: This implementation uses the SDK's CTF client if available.
-    /// The exact module path may vary - check SDK documentation.
     pub async fn redeem_tokens(
         &self,
         condition_id: &str,
@@ -1985,9 +1908,6 @@ impl PolymarketApi {
         Ok(redeem_response)
     }
 
-    /// Merge complete sets of Up and Down tokens for a condition into USDC.
-    /// Burns min(Up_balance, Down_balance) pairs and returns that much USDC via the CTF relayer.
-    /// Uses the same redeemPositions(conditionId, [1,2]) flow as redeem_tokens.
     pub async fn merge_complete_sets(&self, condition_id: &str) -> Result<RedeemResponse> {
         self.redeem_tokens(condition_id, "", "Up+Down (merge complete sets)").await
     }

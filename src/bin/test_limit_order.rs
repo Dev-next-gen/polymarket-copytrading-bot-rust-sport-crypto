@@ -8,27 +8,21 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[command(name = "test_limit_order")]
 #[command(about = "Test placing a limit order on Polymarket")]
 struct Args {
-    /// Token ID to buy (optional - if not provided, will discover current BTC Up token)
     #[arg(short, long)]
     token_id: Option<String>,
     
-    /// Price in cents (e.g., 55 = $0.55)
     #[arg(short, long, default_value = "55")]
     price_cents: u64,
     
-    /// Number of shares
     #[arg(short, long, default_value = "5")]
     shares: u64,
     
-    /// Expiration time in minutes
     #[arg(short, long, default_value = "1")]
     expiration_minutes: u64,
     
-    /// Config file path
     #[arg(short, long, default_value = "config.json")]
     config: String,
     
-    /// Side: BUY or SELL
     #[arg(long, default_value = "BUY")]
     side: String,
 }

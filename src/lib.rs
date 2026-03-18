@@ -25,7 +25,6 @@ use std::io::Write;
 
 static HISTORY_FILE: OnceLock<Mutex<File>> = OnceLock::new();
 
-/// Initialize the global history file writer (called by main.rs)
 pub fn init_history_file(file: File) {
     HISTORY_FILE.set(Mutex::new(file)).expect("History file already initialized");
 }

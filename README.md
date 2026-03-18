@@ -209,6 +209,8 @@ The dashboard is **Rust → WebAssembly**, built with **[Trunk](https://trunkrs.
 
 ```bash
 rustup default stable
+```
+```bash
 rustup target add wasm32-unknown-unknown
 ```
 
@@ -216,7 +218,6 @@ Check:
 
 ```bash
 rustup target list --installed | grep wasm32
-# should show wasm32-unknown-unknown
 ```
 
 **4.2 Install Trunk**
@@ -242,7 +243,9 @@ Cargo installs `trunk` next to `cargo`. If the shell can’t find `trunk`:
 **4.4 Verify**
 
 ```bash
-which trunk    # Linux/macOS — should print e.g. /home/you/.cargo/bin/trunk
+which trunk
+```
+```bash
 trunk --version
 ```
 

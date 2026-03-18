@@ -8,7 +8,6 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use chrono::Utc;
 
-/// Represents a pending limit order in simulation
 #[derive(Debug, Clone)]
 pub struct SimulatedLimitOrder {
     pub token_id: String,
@@ -22,7 +21,6 @@ pub struct SimulatedLimitOrder {
     pub filled: bool,
 }
 
-/// Represents an open position in simulation
 #[derive(Debug, Clone)]
 pub struct SimulatedPosition {
     pub token_id: String,
@@ -39,7 +37,6 @@ pub struct SimulatedPosition {
     pub sell_timestamp: Option<std::time::Instant>,
 }
 
-/// Simulation tracker for tracking orders, positions, and PnL
 pub struct SimulationTracker {
     pending_limit_orders: Arc<Mutex<HashMap<String, SimulatedLimitOrder>>>, // Key: token_id + side
     positions: Arc<Mutex<HashMap<String, SimulatedPosition>>>, // Key: token_id
@@ -73,8 +70,6 @@ impl SimulationTracker {
         })
     }
 
-    /// Get or create a market-specific log file
-    /// Skips dummy markets - they should only log to simulation.toml
     async fn get_market_file(&self, condition_id: &str, period_timestamp: u64) -> Result<Arc<Mutex<std::fs::File>>> {
         // Skip dummy markets - they don't need separate files
         if condition_id == "dummy_eth_fallba" || 
@@ -104,7 +99,6 @@ impl SimulationTracker {
         Ok(file_arc)
     }
 
-    /// Log to simulation file (and optionally to market-specific file)
     pub async fn log_to_file(&self, message: &str) {
         let timestamp = Utc::now().format("%Y-%m-%dT%H:%M:%SZ");
         let log_message = format!("[{}] {}\n", timestamp, message);
@@ -114,8 +108,6 @@ impl SimulationTracker {
         let _ = file.flush();
     }
 
-    /// Log to both main file and market-specific file
-    /// For dummy markets, only logs to simulation.toml (no separate market file)
     pub async fn log_to_market(&self, condition_id: &str, period_timestamp: u64, message: &str) {
         // Write to main simulation log (always)
         self.log_to_file(message).await;
@@ -132,7 +124,6 @@ impl SimulationTracker {
         // If get_market_file returns an error (e.g., for dummy markets), silently skip
     }
 
-    /// Add a limit order to simulation tracking
     pub async fn add_limit_order(
         &self,
         token_id: String,
@@ -196,7 +187,6 @@ impl SimulationTracker {
         }
     }
 
-    /// Cancel a simulated limit order (removes it from pending tracking)
     pub async fn cancel_limit_order(&self, token_id: &str, side: &str) {
         let order_key = format!("{}_{}", token_id, side);
         let mut orders = self.pending_limit_orders.lock().await;
@@ -212,7 +202,6 @@ impl SimulationTracker {
         }
     }
 
-    /// Record a market buy as filled immediately in simulation (no limit order; position created at fill_price).
     pub async fn add_market_buy_position(
         &self,
         token_id: String,
@@ -259,8 +248,6 @@ impl SimulationTracker {
         )).await;
     }
 
-    /// Track price for trend analysis
-    /// Call this whenever you receive new price data
     pub async fn track_price(
         &self,
         period_timestamp: u64,
@@ -276,7 +263,6 @@ impl SimulationTracker {
         tracker.add_price(time_elapsed_seconds, bid_price);
     }
 
-    /// Get trend analysis for a token
     pub async fn get_trend_analysis(
         &self,
         period_timestamp: u64,
@@ -289,7 +275,6 @@ impl SimulationTracker {
             .map(|tracker| tracker.calculate_trend(min_samples))
     }
 
-    /// Check if a token is uptrending
     pub async fn is_token_uptrending(
         &self,
         period_timestamp: u64,
@@ -306,7 +291,6 @@ impl SimulationTracker {
         }
     }
 
-    /// Get trend information for hedge decision making
     pub async fn get_trend_for_hedge(
         &self,
         period_timestamp: u64,
@@ -320,7 +304,6 @@ impl SimulationTracker {
             .map(|tracker| tracker.get_trend_for_hedge(min_samples))
     }
 
-    /// Log trend analysis for a token (useful for debugging)
     pub async fn log_trend_analysis(
         &self,
         period_timestamp: u64,
@@ -384,13 +367,11 @@ impl SimulationTracker {
         }
     }
 
-    /// Clear price trackers for a specific period (when period ends)
     pub async fn clear_period_trackers(&self, period_timestamp: u64) {
         let mut trackers = self.price_trackers.lock().await;
         trackers.retain(|(period, _), _| *period != period_timestamp);
     }
 
-    /// Check if any limit orders should be filled based on current prices
     pub async fn check_limit_orders(&self, current_prices: &HashMap<String, TokenPrice>) {
         let mut orders_to_fill = Vec::new();
         
@@ -522,7 +503,6 @@ impl SimulationTracker {
         }
     }
 
-    /// Fill a limit order and create a position (for BUY) or close a position (for SELL)
     async fn fill_limit_order(&self, order_key: &str, current_prices: &HashMap<String, TokenPrice>) {
         let mut orders = self.pending_limit_orders.lock().await;
         let order = match orders.get_mut(order_key) {
@@ -643,7 +623,6 @@ impl SimulationTracker {
         }
     }
 
-    /// Update sell price for a position (when limit sell order is placed)
     pub async fn set_position_sell_price(&self, token_id: &str, sell_price: f64) {
         let mut positions = self.positions.lock().await;
         if let Some(position) = positions.get_mut(token_id) {
@@ -651,7 +630,6 @@ impl SimulationTracker {
         }
     }
 
-    /// Calculate unrealized PnL for all open positions
     pub async fn calculate_unrealized_pnl(&self, current_prices: &HashMap<String, TokenPrice>) -> f64 {
         let positions = self.positions.lock().await;
         let mut total_unrealized = 0.0;
@@ -674,7 +652,6 @@ impl SimulationTracker {
         total_unrealized
     }
 
-    /// Get position summary
     pub async fn get_position_summary(&self, current_prices: &HashMap<String, TokenPrice>) -> String {
         let positions = self.positions.lock().await;
         let total_realized = *self.total_realized_pnl.lock().await;
@@ -727,19 +704,16 @@ impl SimulationTracker {
         summary
     }
 
-    /// Write position summary to log file
     pub async fn log_position_summary(&self, current_prices: &HashMap<String, TokenPrice>) {
         let summary = self.get_position_summary(current_prices).await;
         self.log_to_file(&summary).await;
     }
 
-    /// Check if a position exists for a given token_id
     pub async fn has_position(&self, token_id: &str) -> bool {
         let positions = self.positions.lock().await;
         positions.contains_key(token_id)
     }
 
-    /// Get all token IDs from open positions
     pub async fn get_position_token_ids(&self) -> Vec<String> {
         let positions = self.positions.lock().await;
         positions.values()
@@ -748,7 +722,6 @@ impl SimulationTracker {
             .collect()
     }
 
-    /// Get all positions (for market closure checking)
     pub async fn get_all_positions(&self) -> Vec<SimulatedPosition> {
         let positions = self.positions.lock().await;
         positions.values()
@@ -757,7 +730,6 @@ impl SimulationTracker {
             .collect()
     }
 
-    /// Get all token IDs from pending limit orders
     pub async fn get_pending_order_token_ids(&self) -> Vec<String> {
         let orders = self.pending_limit_orders.lock().await;
         orders.values()
@@ -766,15 +738,11 @@ impl SimulationTracker {
             .collect()
     }
 
-    /// Get count of pending (unfilled) limit orders
     pub async fn get_pending_order_count(&self) -> usize {
         let orders = self.pending_limit_orders.lock().await;
         orders.values().filter(|o| !o.filled).count()
     }
 
-    /// Calculate final PnL when a market resolves
-    /// Resolves all positions for a given condition_id based on market outcome
-    /// Returns: (total_spent, total_earned, net_pnl)
     pub async fn resolve_market_positions(
         &self,
         condition_id: &str,
@@ -849,7 +817,6 @@ impl SimulationTracker {
         (total_spent_for_market, total_earned_for_market, net_pnl)
     }
 
-    /// Get total spending and earnings across all positions
     pub async fn get_total_spending_and_earnings(&self) -> (f64, f64, f64) {
         let total_invested = *self.total_invested.lock().await;
         let total_realized = *self.total_realized_pnl.lock().await;
@@ -857,8 +824,6 @@ impl SimulationTracker {
         (total_invested, total_earned, total_realized)
     }
 
-    /// Log market start event
-    /// Logs once to simulation.toml and writes to market-specific files (without duplicating main log)
     pub async fn log_market_start(&self, period_timestamp: u64, eth_condition_id: &str, btc_condition_id: &str, sol_condition_id: &str, xrp_condition_id: &str) {
         let msg = format!(
             "🆕 NEW MARKET STARTED | Period: {} | ETH: {} | BTC: {} | SOL: {} | XRP: {}",
@@ -905,7 +870,6 @@ impl SimulationTracker {
         }
     }
 
-    /// Log market end event
     pub async fn log_market_end(&self, market_name: &str, period_timestamp: u64, condition_id: &str) {
         let msg = format!(
             "🏁 MARKET ENDED | Market: {} | Period: {} | Condition: {}",
@@ -917,7 +881,6 @@ impl SimulationTracker {
         self.log_to_market(condition_id, period_timestamp, &msg).await;
     }
 
-    /// Log summary of pending orders
     pub async fn log_pending_orders_summary(&self, current_prices: &HashMap<String, TokenPrice>) {
         let orders = self.pending_limit_orders.lock().await;
         let unfilled_orders: Vec<_> = orders.values()
@@ -1002,10 +965,8 @@ use anyhow::{Result, Context};
 // Price Trending Analysis
 // ============================================================================
 
-/// Tracks price history for trend analysis
 #[derive(Debug, Clone)]
 pub struct PriceTrendTracker {
-    /// Store (time_elapsed_seconds, bid_price) pairs
     price_history: VecDeque<(u64, f64)>,
     max_history_size: usize,
 }
@@ -1035,7 +996,6 @@ impl PriceTrendTracker {
         }
     }
 
-    /// Add a new price snapshot
     pub fn add_price(&mut self, time_elapsed_seconds: u64, price: f64) {
         // Remove old entries if we exceed max size
         while self.price_history.len() >= self.max_history_size {
@@ -1044,7 +1004,6 @@ impl PriceTrendTracker {
         self.price_history.push_back((time_elapsed_seconds, price));
     }
 
-    /// Calculate the current trend using linear regression and pattern analysis
     pub fn calculate_trend(&self, min_samples: usize) -> TrendAnalysis {
         if self.price_history.len() < min_samples {
             return TrendAnalysis {
@@ -1129,13 +1088,11 @@ impl PriceTrendTracker {
         }
     }
 
-    /// Check if price is trending up strongly
     pub fn is_uptrending(&self, min_strength: f64, min_samples: usize) -> bool {
         let trend = self.calculate_trend(min_samples);
         trend.direction == TrendDirection::Uptrend && trend.strength >= min_strength
     }
 
-    /// Get the current price trend for decision making
     pub fn get_trend_for_hedge(&self, min_samples: usize) -> (bool, f64, f64) {
         // Returns (is_uptrending, trend_strength, slope)
         let trend = self.calculate_trend(min_samples);
@@ -1143,12 +1100,10 @@ impl PriceTrendTracker {
         (is_uptrend, trend.strength, trend.slope)
     }
 
-    /// Get the number of price samples currently tracked
     pub fn sample_count(&self) -> usize {
         self.price_history.len()
     }
 
-    /// Clear all price history (useful when starting a new period)
     pub fn clear(&mut self) {
         self.price_history.clear();
     }

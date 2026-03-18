@@ -17,7 +17,6 @@ const PING_INTERVAL_SECS: u64 = 5;
 const RECONNECT_DELAY_SECS: u64 = 5;
 const MAX_SEEN: usize = 10_000;
 
-/// Notify UI that state changed (e.g. new trade).
 pub type NotifyTx = broadcast::Sender<()>;
 
 fn activity_payload_to_leader_trade(p: &serde_json::Value) -> Option<LeaderTrade> {
@@ -246,8 +245,6 @@ async fn run_activity_stream_loop(
     Err(anyhow!("WebSocket stream ended"))
 }
 
-/// Spawn background task that connects to activity stream, subscribes to trades,
-/// filters by target set (1 or more), and runs copy-trade (or sim). Reconnects on disconnect.
 pub fn spawn_activity_stream(
     targets: Vec<String>,
     api: Arc<crate::api::PolymarketApi>,

@@ -6,23 +6,18 @@ use polymarket_trading_bot::{PolymarketApi, Config};
 #[command(name = "test_redeem")]
 #[command(about = "Redeem winning tokens from your portfolio after market resolution")]
 struct Args {
-    /// Token ID to redeem (optional - if not provided, will scan portfolio and redeem all winning tokens)
     #[arg(short, long)]
     token_id: Option<String>,
     
-    /// Config file path
     #[arg(short, long, default_value = "config.json")]
     config: String,
     
-    /// Just check portfolio without redeeming
     #[arg(long)]
     check_only: bool,
     
-    /// Scan portfolio and list all tokens with balance
     #[arg(long)]
     list: bool,
     
-    /// Redeem all winning tokens in portfolio automatically
     #[arg(long)]
     redeem_all: bool,
 }
@@ -251,7 +246,6 @@ async fn main() -> Result<()> {
     }
 }
 
-/// Find which market a token belongs to and determine outcome
 async fn find_token_market(
     api: &PolymarketApi,
     _token_id: &str,
@@ -283,7 +277,6 @@ async fn find_token_market(
     Ok(None)
 }
 
-/// Find market for a token manually by checking BTC and ETH markets
 async fn find_token_market_manual(
     api: &PolymarketApi,
     token_id: &str,
@@ -325,7 +318,6 @@ async fn find_token_market_manual(
     Ok(None)
 }
 
-/// Redeem a winning token
 async fn redeem_token(
     api: &PolymarketApi,
     token_id: &str,

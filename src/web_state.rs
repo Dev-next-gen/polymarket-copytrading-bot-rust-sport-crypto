@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-/// Keep only recent activity so the UI stays real-time; trim older entries.
 const MAX_LOGS: usize = 50;
 
 #[derive(Debug, Clone, Serialize)]
@@ -76,7 +75,6 @@ impl Default for BotState {
     }
 }
 
-/// Global UI state. Clone to get Arc<RwLock<BotState>> for handlers.
 pub type SharedState = Arc<RwLock<BotState>>;
 
 pub fn new_shared_state() -> SharedState {
@@ -139,7 +137,6 @@ pub async fn push_trade(
     }
 }
 
-/// prev_sizes: (user -> (key "slug|outcome" -> size)) for delta
 pub async fn set_positions(
     state: SharedState,
     user: String,

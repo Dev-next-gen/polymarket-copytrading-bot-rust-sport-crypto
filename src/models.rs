@@ -65,7 +65,6 @@ impl TokenPrice {
     }
 }
 
-/// Order structure for creating orders (before signing)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrderRequest {
     pub token_id: String,
@@ -76,8 +75,6 @@ pub struct OrderRequest {
     pub order_type: String, // "LIMIT" or "MARKET"
 }
 
-/// Signed order structure for posting to Polymarket
-/// According to Polymarket docs, orders must be signed with private key before posting
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SignedOrder {
     // Order fields
@@ -125,7 +122,6 @@ pub struct MarketData {
     pub down_token: Option<TokenPrice>,
 }
 
-/// Trade for momentum-based strategy (buy any token when price reaches 0.9 after 10 minutes)
 #[derive(Debug, Clone)]
 pub struct PendingTrade {
     pub token_id: String,             // Token ID (can be BTC Up/Down, ETH Up/Down)

@@ -31,19 +31,15 @@ use polymarket_trading_bot::web_state::{self, SharedState};
 #[command(name = "main_copytrading")]
 #[command(about = "Copy-trade from leader addresses (trade.toml). Uses config.json for Polymarket credentials.")]
 pub struct CopyArgs {
-    /// Config file (polymarket credentials, API key)
     #[arg(short, long, default_value = "config.json")]
     pub config: PathBuf,
 
-    /// Copy-trading config (targets, filters, exit)
     #[arg(short, long, default_value = "trade.toml")]
     pub trade_config: PathBuf,
 
-    /// Simulation mode
     #[arg(long)]
     pub simulation: bool,
 
-    /// Directory to serve UI from (default: frontend/dist). Build with: cd frontend && trunk build
     #[arg(long, default_value = "frontend/dist")]
     pub ui_dir: PathBuf,
 }
@@ -55,7 +51,6 @@ struct AppState {
     web: SharedState,
     ui_dir: PathBuf,
     notify: NotifyTx,
-    /// Shared client for OpenRouter (connection reuse, pool); keeps agent chat fast.
     openrouter_client: reqwest::Client,
 }
 
@@ -125,7 +120,6 @@ async fn api_leaderboard(
     Ok(axum::Json(body))
 }
 
-/// Provider entry for dropdown: only includes providers that have API key set in .env.
 #[derive(Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AgentProvider {
@@ -171,19 +165,15 @@ async fn api_agent_providers() -> Json<AgentProvidersResponse> {
     Json(AgentProvidersResponse { providers })
 }
 
-/// Request body for agent chat.
 #[derive(Debug, serde::Deserialize)]
 struct AgentChatRequest {
     message: String,
-    /// Provider id: "openrouter" | "openai" | "claude". If missing, uses first available.
     #[serde(default)]
     provider: Option<String>,
-    /// Model override for that provider. If missing, uses provider default.
     #[serde(default)]
     model: Option<String>,
 }
 
-/// Response body for agent chat.
 #[derive(Debug, serde::Serialize)]
 struct AgentChatResponse {
     reply: String,
@@ -416,7 +406,6 @@ async fn api_state(State(app): State<AppState>) -> axum::response::Response {
     res
 }
 
-/// Serve index.html for GET / so the SPA always loads the same entry point.
 async fn serve_index(State(app): State<AppState>) -> Result<Response, (StatusCode, &'static str)> {
     use axum::response::IntoResponse;
     let path = app.ui_dir.join("index.html");

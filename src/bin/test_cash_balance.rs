@@ -7,7 +7,6 @@ use rust_decimal::Decimal;
 #[command(name = "test_cash_balance")]
 #[command(about = "Check USDC (cash) balance of your Polymarket account")]
 struct Args {
-    /// Config file path
     #[arg(short, long, default_value = "config.json")]
     config: String,
 }

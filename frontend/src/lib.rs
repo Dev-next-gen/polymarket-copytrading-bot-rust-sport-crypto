@@ -450,8 +450,6 @@ struct AgentMessage {
     content: String,
 }
 
-/// Renders a subset of markdown to safe HTML for assistant messages (Claude-style).
-/// Escapes HTML, then: **bold**, double newline = paragraph, **Section** or **Section** — gets heading class.
 fn markdown_to_safe_html(s: &str) -> String {
     fn escape(s: &str) -> String {
         s.replace('&', "&amp;")
@@ -1344,7 +1342,6 @@ fn PositionsPanel(
     }
 }
 
-/// Value for "show all targets" in the log filter.
 const LOG_TARGET_ALL: &str = "";
 
 #[component]

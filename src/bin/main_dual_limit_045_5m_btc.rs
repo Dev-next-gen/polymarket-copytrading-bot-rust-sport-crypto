@@ -19,19 +19,12 @@ use polymarket_trading_bot::trader::Trader;
 const LIMIT_PRICE: f64 = 0.45;
 const PERIOD_DURATION_5M: u64 = 300;
 const DEFAULT_HEDGE_PRICE: f64 = 0.85;
-/// 2-min window: active when time_elapsed in [NINETY_SEC_AFTER_SECONDS, THREE_MIN_AFTER_SECONDS) i.e. 2 min to 3 min.
 const NINETY_SEC_AFTER_SECONDS: u64 = 120;
-/// 3-min window: active when time_elapsed >= THREE_MIN_AFTER_SECONDS.
 const THREE_MIN_AFTER_SECONDS: u64 = 180;
-/// 4-min: from here we commit to hedge: if ask >= hedge_price buy now; if ask < hedge_price keep trailing (bounce trigger).
 const FOUR_MIN_AFTER_SECONDS: u64 = 240;
-/// Only place limit orders when we're within this many seconds of period start (so we don't place mid-period when bot starts).
 const NEW_MARKET_PLACE_WINDOW_SECONDS: u64 = 15;
-/// 2-min band = 1 - dual_limit_price - 0.1 (e.g. 0.45 when limit is 0.45). 3-min band = 1 - dual_limit_price (e.g. 0.55).
 const BAND_2MIN_OFFSET: f64 = 0.1;
-/// Trailing-buy mode: monitor the token whose ask is above this threshold (0.55).
 const TRAILING_BUY_FIRST_TOKEN_THRESHOLD: f64 = 0.55;
-/// A writer that writes to both stderr (terminal) and a file
 struct DualWriter {
     stderr: io::Stderr,
     file: Mutex<File>,

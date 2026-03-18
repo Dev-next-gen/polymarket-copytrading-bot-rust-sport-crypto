@@ -3,7 +3,6 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// Predict.fun API client for testing
 struct PredictFunClient {
     client: Client,
     base_url: String,
@@ -82,7 +81,6 @@ impl PredictFunClient {
         }
     }
 
-    /// Get authentication message
     async fn get_auth_message(&self) -> Result<String> {
         // Try different possible endpoint paths
         let endpoints = vec![
@@ -113,8 +111,6 @@ impl PredictFunClient {
         anyhow::bail!("Failed to get auth message from any endpoint. Check API documentation for correct endpoint path.")
     }
 
-    /// Authenticate with signature and get JWT token
-    /// Note: You'll need to sign the message with your private key
     async fn authenticate(&mut self, signature: String, message: String) -> Result<()> {
         let url = format!("{}/authorization/jwt", self.base_url);
 
@@ -144,7 +140,6 @@ impl PredictFunClient {
         Ok(())
     }
 
-    /// Add JWT token to request if available
     fn add_auth_header(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
         if let Some(token) = &self.jwt_token {
             request.header("Authorization", format!("Bearer {}", token))
@@ -153,7 +148,6 @@ impl PredictFunClient {
         }
     }
 
-    /// Get all markets
     async fn get_markets(&self) -> Result<Vec<Market>> {
         let url = format!("{}/markets", self.base_url);
 
@@ -193,7 +187,6 @@ impl PredictFunClient {
         Ok(markets)
     }
 
-    /// Get market by ID
     async fn get_market_by_id(&self, market_id: &str) -> Result<Value> {
         let url = format!("{}/markets/{}", self.base_url, market_id);
 
@@ -217,8 +210,6 @@ impl PredictFunClient {
         Ok(market)
     }
 
-    /// Get orderbook for a market
-    /// This returns bid/ask prices for Up/Down tokens
     async fn get_orderbook(&self, market_id: &str) -> Result<Value> {
         let url = format!("{}/markets/{}/orderbook", self.base_url, market_id);
 
@@ -242,7 +233,6 @@ impl PredictFunClient {
         Ok(orderbook)
     }
 
-    /// Create an order (buy or sell)
     async fn create_order(
         &self,
         market_id: &str,

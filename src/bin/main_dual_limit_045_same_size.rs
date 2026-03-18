@@ -22,50 +22,29 @@ const LIMIT_PRICE: f64 = 0.45;
 const PERIOD_DURATION: u64 = 900;
 const DEFAULT_HEDGE_AFTER_MINUTES: u64 = 10;
 const DEFAULT_HEDGE_PRICE: f64 = 0.8;
-/// After this many seconds (2 min), if one side filled and unfilled price < 0.5, cancel limit and buy at market (only before 4 min).
 const NINETY_SEC_AFTER_SECONDS: u64 = 120;
-/// After this many seconds (4 min), check for mid-tier hedge when unfilled price is in (FOUR_MIN_HEDGE_MIN, FOUR_MIN_HEDGE_MAX).
 const TWO_MIN_AFTER_SECONDS: u64 = 240;
-/// 4-min hedge: unfilled price must be > this (so 0.5 < price < FOUR_MIN_HEDGE_MAX).
 const FOUR_MIN_HEDGE_MIN_PRICE: f64 = 0.5;
-/// 4-min hedge: unfilled price must be < this for trailing. If price drops below 0.5 after 4 min, use 2-min hedging mode.
 const FOUR_MIN_HEDGE_MAX_PRICE: f64 = 0.65;
-/// 4-min: if unfilled price goes over this, buy at market immediately (no trailing).
 const FOUR_MIN_HEDGE_BUY_OVER_PRICE: f64 = 0.75;
-/// Early hedge: unfilled price must be in (EARLY_HEDGE_MIN_PRICE, EARLY_HEDGE_MAX_PRICE). From 0.85 to end, standard hedge.
 const EARLY_HEDGE_MIN_PRICE: f64 = 0.65;
 const EARLY_HEDGE_MAX_PRICE: f64 = 0.85;
-/// 2-min hedge: when unfilled token price is less than 0.5, cancel limit and buy at market.
 const NINETY_SEC_HEDGE_MAX_PRICE: f64 = 0.5;
-/// When one side price goes below this (post-hedge), place limit sell at SELL_LOW_PRICE for that token and SELL_HIGH_PRICE for opposite.
 const LOW_PRICE_THRESHOLD: f64 = 0.1;
-/// Limit sell price for the token whose price dropped under LOW_PRICE_THRESHOLD (post-hedge exit).
 const SELL_LOW_PRICE: f64 = 0.05;
-/// Limit sell price for the opposite token when we place the low-price exit.
 const SELL_HIGH_PRICE: f64 = 0.99;
-/// When both Up and Down filled at 0.45 (no hedge): if any token price goes below this, place sell at DUAL_FILLED_SELL_*.
 const DUAL_FILLED_LOW_THRESHOLD: f64 = 0.03;
-/// Limit sell price for the token under DUAL_FILLED_LOW_THRESHOLD (both-filled-at-limit case).
 const DUAL_FILLED_SELL_LOW: f64 = 0.02;
-/// Limit sell price for the opposite token when placing dual-filled low-price exit.
 const DUAL_FILLED_SELL_HIGH: f64 = 0.99;
-/// Set to true to enable limit selling when both positions were bought at 0.45 (dual-filled); false = disabled.
 const DUAL_FILLED_LIMIT_SELL_ENABLED: bool = false;
-/// Limit sell orders (0.01/0.99 and 0.05/0.99 exits) are only placed after this many seconds elapsed in the period.
 const LIMIT_SELL_AFTER_SECONDS: u64 = 600; // 10 minutes
-/// Hedge price threshold for which exit path we use: if hedge price >= this → place 0.05/0.99 limit sells when one side < LOW_PRICE_THRESHOLD; if hedge price < this → place 0.02/0.99 (cheaper exit for low-quality hedges).
 const HEDGE_PRICE_MIN_FOR_LIMIT_SELL: f64 = 0.60;
-/// Max price we will pay for the unfilled side when hedging. Total cost = 0.45 (limit) + hedge ≤ 1.0 for breakeven; if unfilled ask > this we skip hedge to avoid locking in a loss.
 const MAX_HEDGE_PRICE: f64 = 0.54;
 
-/// Set to true to temporarily disable all hedge logic (2-min, 4-min, early, standard).
 const HEDGE_DISABLED: bool = false;
-/// Set to true to temporarily disable only early hedge (e.g. 5-min hedge).
 const EARLY_HEDGE_DISABLED: bool = false;
-/// Set to true to temporarily disable only standard hedge (e.g. 10-min hedge).
 const STANDARD_HEDGE_DISABLED: bool = false;
 
-/// A writer that writes to both stderr (terminal) and a file
 struct DualWriter {
     stderr: io::Stderr,
     file: Mutex<File>,
@@ -125,8 +104,6 @@ macro_rules! log_println {
     };
 }
 
-/// Replay historical prices and run trailing-stop hedge logic (no real orders).
-/// Assumes one side (e.g. Up) filled at 0.45; runs 2-min / 4-min / early hedge checks on unfilled (Down) price.
 fn run_trailing_stop_replay(
     snapshots: &[polymarket_trading_bot::backtest::PriceSnapshot],
     hedge_after_seconds: u64,
