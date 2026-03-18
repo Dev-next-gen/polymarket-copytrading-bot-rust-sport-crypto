@@ -36,6 +36,7 @@ When multiple leaders trade the same market, **AI can help** pick the stronger s
 
 The goal isn’t quick wins — it’s **steady growth**, risk spread across markets (sports, crypto, politics, macro), and an AI-assisted system built for the long term.
 
+**→ Deeper dive:** [Why most copy trading fails — and how this bot is different](Analysis.md) *(strategy vs execution, filters & multi-target, why Rust, conflicts between leaders, philosophy).*
 
 ---
 
@@ -70,6 +71,8 @@ The goal isn’t quick wins — it’s **steady growth**, risk spread across mar
 
 ```bash
 git clone https://github.com/Krypto-Hashers-Community/polymarket-copytrading-bot-rust-sport-crypto.git
+```
+```bash
 cd polymarket-copytrading-bot-rust-sport-crypto
 ```
 
