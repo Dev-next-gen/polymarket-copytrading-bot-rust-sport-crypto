@@ -1416,6 +1416,59 @@ impl PolymarketApi {
         unreachable!()
     }
 
+    /// Same as place_market_order but skips the USDC balance pre-check to save one RTT on the hot path (copy-trading).
+    /// If balance is insufficient, the CLOB will reject the order and we return that error.
+    pub async fn place_market_order_fast(
+        &self,
+        token_id: &str,
+        amount: f64,
+        side: &str,
+        order_type: Option<&str>,
+    ) -> Result<OrderResponse> {
+        if side != "BUY" && side != "SELL" {
+            anyhow::bail!("Invalid order side: {}. Must be 'BUY' or 'SELL'", side);
+        }
+        let ot = order_type.unwrap_or("FAK");
+        if ot != "FOK" && ot != "FAK" {
+            anyhow::bail!("Invalid order_type: {}. Must be 'FOK' or 'FAK'", ot);
+        }
+        let is_buy = side == "BUY";
+        let amount_str = format!("{:.8}", amount);
+        if !is_buy && amount <= 0.0 {
+            anyhow::bail!("Invalid shares amount: {}. Must be > 0.", amount);
+        }
+        let handle = self.ensure_clob_client().await?;
+        let max_retries = if is_buy { 1 } else { 3 };
+        for attempt in 1..=max_retries {
+            match clob_sdk::post_market_order(handle, token_id, side, &amount_str, is_buy, ot) {
+                Ok(order_id) => {
+                    log::info!("   ✅ Posted | Order {}", order_id);
+                    return Ok(OrderResponse {
+                        order_id: Some(order_id.clone()),
+                        status: "LIVE".to_string(),
+                        message: Some(format!("Market order executed. Order ID: {}", order_id)),
+                    });
+                }
+                Err(e) => {
+                    let err_s = format!("{}", e);
+                    log::warn!("post_market_order failed: {}", err_s);
+                    let is_allowance = err_s.contains("allowance");
+                    let is_balance = err_s.contains("balance") && !err_s.contains("allowance");
+                    if is_balance {
+                        anyhow::bail!("Insufficient balance: {}", e);
+                    }
+                    if is_allowance && !is_buy && attempt < max_retries {
+                        let _ = self.update_balance_allowance_for_sell(token_id).await;
+                        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+                        continue;
+                    }
+                    anyhow::bail!("Failed to post market order: {}", e);
+                }
+            }
+        }
+        unreachable!()
+    }
+
     pub async fn place_market_orders(
         &self,
         orders: &[(&str, f64, &str, Option<&str>)], // (token_id, amount, side, order_type)

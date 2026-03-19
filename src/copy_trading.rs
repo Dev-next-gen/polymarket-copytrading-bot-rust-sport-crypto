@@ -85,7 +85,7 @@ fn default_multiplier() -> f64 {
     1.0
 }
 fn default_poll_interval() -> f64 {
-    5.0
+    2.0
 }
 
 #[derive(Debug, Clone, Default, serde::Deserialize)]
@@ -297,7 +297,7 @@ pub async fn copy_trade(
         trade.side
     );
 
-    api.place_market_order(&trade.asset_id, amount_usd_or_shares, &trade.side, Some("FAK"))
+    api.place_market_order_fast(&trade.asset_id, amount_usd_or_shares, &trade.side, Some("FAK"))
         .await
         .context("place_market_order failed")?;
 
