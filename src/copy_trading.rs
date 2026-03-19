@@ -1,12 +1,17 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use rust_decimal::prelude::{ToPrimitive};
+use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
-use std::str::FromStr;
 use std::collections::HashMap;
 use std::path::Path;
+use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+
+fn is_valid_eth_address(s: &str) -> bool {
+    let s = s.strip_prefix("0x").unwrap_or(s);
+    s.len() == 40 && s.chars().all(|c| c.is_ascii_hexdigit())
+}
 
 use crate::api::{DataApiPosition, PolymarketApi};
 
@@ -111,7 +116,8 @@ impl CopyTradingConfig {
         toml::from_str(&s).context("Failed to parse trade.toml")
     }
 
-    pub fn target_addresses(&self) -> Vec<String> {
+    /// Raw strings from config (may include URLs or invalid entries).
+    fn target_addresses_raw(&self) -> Vec<String> {
         let raw = match self.copy.target_addresses.as_ref() {
             Some(v) => v.clone(),
             None => return Vec::new(),
@@ -125,6 +131,30 @@ impl CopyTradingConfig {
         } else {
             Vec::new()
         }
+    }
+
+    /// Valid proxy wallet addresses (0x + 40 hex, lowercased). Invalid entries are logged and skipped.
+    /// The activity feed matches by proxyWallet, so targets must be the leader's proxy wallet, not a profile URL.
+    pub fn target_addresses(&self) -> Vec<String> {
+        let raw = self.target_addresses_raw();
+        let mut valid = Vec::with_capacity(raw.len());
+        for s in raw {
+            let t = s.trim().to_lowercase();
+            if t.is_empty() {
+                continue;
+            }
+            if is_valid_eth_address(&t) {
+                valid.push(t);
+            } else {
+                log::warn!(
+                    "Copy target skipped (not a valid 0x address): {:?}. \
+                    Use the leader's proxy wallet address (0x + 40 hex). \
+                    See README 'Finding a leader\\'s address'.",
+                    if s.len() > 60 { format!("{}...", &s[..60]) } else { s }
+                );
+            }
+        }
+        valid
     }
 }
 
@@ -242,13 +272,39 @@ pub async fn copy_trade(
         return Ok(None);
     }
 
+    // Polymarket CLOB typically requires a minimum order size (e.g. ~$0.01+ for BUY).
+    const MIN_BUY_USD: f64 = 0.01;
+    const MIN_SELL_SHARES: f64 = 0.000_001;
+    if is_buy && amount_usd_or_shares < MIN_BUY_USD {
+        log::warn!(
+            "Copy skipped: BUY amount {} below minimum {} USD (leader size {} @ {} × multiplier {})",
+            amount_usd_or_shares, MIN_BUY_USD, trade.size, trade.price, multiplier
+        );
+        return Ok(None);
+    }
+    if !is_buy && amount_usd_or_shares < MIN_SELL_SHARES {
+        log::warn!(
+            "Copy skipped: SELL amount {} below minimum shares",
+            amount_usd_or_shares
+        );
+        return Ok(None);
+    }
+
+    log::info!(
+        "Placing market order: token_id={}.. amount={:.4} side={} type=FOK",
+        &trade.asset_id[..trade.asset_id.len().min(20)],
+        amount_usd_or_shares,
+        trade.side
+    );
+
     // Try FOK first (stricter), then fall back to FAK to increase fill probability.
     match api
         .place_market_order(&trade.asset_id, amount_usd_or_shares, &trade.side, Some("FOK"))
         .await
     {
         Ok(_) => {}
-        Err(_) => {
+        Err(e) => {
+            log::warn!("FOK failed: {}; trying FAK", e);
             api.place_market_order(&trade.asset_id, amount_usd_or_shares, &trade.side, Some("FAK"))
                 .await
                 .context("place_market_order failed (FOK and fallback FAK)")?;

@@ -1390,7 +1390,7 @@ impl PolymarketApi {
         for attempt in 1..=max_retries {
             match clob_sdk::post_market_order(handle, token_id, side, &amount_str, is_buy, ot) {
                 Ok(order_id) => {
-                    eprintln!("   ✅ Posted | Order {}", order_id);
+                    log::info!("   ✅ Posted | Order {}", order_id);
                     return Ok(OrderResponse {
                         order_id: Some(order_id.clone()),
                         status: "LIVE".to_string(),
@@ -1399,6 +1399,7 @@ impl PolymarketApi {
                 }
                 Err(e) => {
                     let err_s = format!("{}", e);
+                    log::warn!("post_market_order failed: {}", err_s);
                     let is_allowance = err_s.contains("allowance");
                     let is_balance = err_s.contains("balance") && !err_s.contains("allowance");
                     if is_balance {

@@ -20,15 +20,53 @@ const PING_MSG: &str = "ping";
 
 pub type NotifyTx = broadcast::Sender<()>;
 
+fn is_eth_address(s: &str) -> bool {
+    let s = s.trim().strip_prefix("0x").unwrap_or(s);
+    s.len() == 40 && s.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+fn payload_proxy_or_owner(payload: &serde_json::Value) -> Option<String> {
+    let proxy = payload
+        .get("proxyWallet")
+        .or_else(|| payload.get("proxy_wallet"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_lowercase());
+    if proxy.is_some() {
+        return proxy;
+    }
+    for key in ["owner", "maker", "makerAddress", "user"] {
+        if let Some(v) = payload.get(key).and_then(|v| v.as_str()) {
+            let lower = v.trim().to_lowercase();
+            if is_eth_address(&lower) {
+                return Some(lower);
+            }
+        }
+    }
+    None
+}
+
 fn activity_payload_to_leader_trade(p: &serde_json::Value) -> Option<LeaderTrade> {
-    let asset = p.get("asset")?.as_str()?.to_string();
-    let side = p.get("side")?.as_str()?.to_string();
-    let size = p.get("size").and_then(|v| v.as_f64()).or_else(|| p.get("size").and_then(|v| v.as_u64().map(|u| u as f64)))?;
-    let price = p.get("price").and_then(|v| v.as_f64()).or_else(|| p.get("price").and_then(|v| v.as_u64().map(|u| u as f64)))?;
-    let timestamp = p.get("timestamp").and_then(|v| v.as_i64()).unwrap_or(0);
-    let tx_hash = p.get("transactionHash").and_then(|v| v.as_str()).unwrap_or("");
+    let asset = p.get("asset")
+        .or_else(|| p.get("assetId"))
+        .or_else(|| p.get("token_id"))
+        .and_then(|v| v.as_str())?.to_string();
+    let side_raw = p.get("side")
+        .or_else(|| p.get("orderSide"))
+        .or_else(|| p.get("type"))
+        .and_then(|v| v.as_str())?;
+    let side = side_raw.to_uppercase();
+    let size = p.get("size").and_then(|v| v.as_f64())
+        .or_else(|| p.get("size").and_then(|v| v.as_u64().map(|u| u as f64)))
+        .or_else(|| p.get("size").and_then(|v| v.as_str().and_then(|s| s.parse::<f64>().ok())))?;
+    let price = p.get("price").and_then(|v| v.as_f64())
+        .or_else(|| p.get("price").and_then(|v| v.as_u64().map(|u| u as f64)))
+        .or_else(|| p.get("price").and_then(|v| v.as_str().and_then(|s| s.parse::<f64>().ok())))?;
+    let timestamp = p.get("timestamp").and_then(|v| v.as_i64())
+        .or_else(|| p.get("timestamp").and_then(|v| v.as_str().and_then(|s| s.parse::<i64>().ok())))
+        .unwrap_or(0);
+    let tx_hash = p.get("transactionHash").or_else(|| p.get("transaction_hash")).and_then(|v| v.as_str()).unwrap_or("");
     let id = format!("{}{}", tx_hash, timestamp);
-    let condition_id = p.get("conditionId").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let condition_id = p.get("conditionId").or_else(|| p.get("condition_id")).and_then(|v| v.as_str()).unwrap_or("").to_string();
     let slug = p.get("slug").and_then(|v| v.as_str()).map(String::from);
     let outcome = p.get("outcome").and_then(|v| v.as_str()).map(String::from);
     Some(LeaderTrade {
@@ -61,6 +99,7 @@ async fn run_activity_stream_loop(
     write.send(Message::Text(SUBSCRIBE_MSG.to_string())).await?;
 
     let mut seen: HashSet<String> = HashSet::new();
+    let mut logged_unknown_proxy: HashSet<String> = HashSet::new();
     let ping_handle = tokio::spawn({
         let mut write = write;
         async move {
@@ -95,21 +134,39 @@ async fn run_activity_stream_loop(
             Some(p) => p,
             None => continue,
         };
-        let proxy = payload
-            .get("proxyWallet")
-            .or_else(|| payload.get("proxy_wallet"))
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_lowercase());
-        let proxy = match proxy {
+        let proxy = match payload_proxy_or_owner(payload) {
             Some(p) => p,
-            None => continue,
+            None => {
+                if logged_unknown_proxy.insert("__no_proxy__".to_string()) {
+                    let keys: Vec<_> = payload.as_object().map(|o| o.keys().cloned().collect()).unwrap_or_default();
+                    info!(
+                        "Activity payload missing wallet field (proxyWallet/owner). Keys: {:?}. If your target never matches, the feed format may have changed.",
+                        keys
+                    );
+                }
+                continue;
+            }
         };
         if !targets_lower.contains(&proxy) {
+            if logged_unknown_proxy.insert(proxy.clone()) {
+                info!(
+                    "Activity from proxy {} is not in your target list. Add this address to copy.target_address (or copy.target_addresses) in trade.toml to copy this trader.",
+                    proxy
+                );
+            }
             continue;
         }
         let trade = match activity_payload_to_leader_trade(payload) {
             Some(t) => t,
-            None => continue,
+            None => {
+                if logged_unknown_proxy.insert(format!("__parse_fail_{}", proxy)) {
+                    warn!(
+                        "Matched target {} but could not parse trade (missing asset/side/size/price?). Check payload format.",
+                        proxy
+                    );
+                }
+                continue;
+            }
         };
         if seen.contains(&trade.id) {
             continue;
@@ -126,6 +183,10 @@ async fn run_activity_stream_loop(
         if !should_copy_trade(&config, &trade) {
             let slug = trade.slug.as_deref().unwrap_or("?");
             let outcome = trade.outcome.as_deref().unwrap_or("?");
+            info!(
+                "Filtered | {} {} {} size {} @ {} | {} (entry_trade_sec / revert_trade / trade_sec_from_resolve)",
+                trade.side, outcome, slug, trade.size, trade.price, proxy
+            );
             web_state::push_trade(
                 web_state.clone(),
                 "LIVE",
@@ -165,6 +226,12 @@ async fn run_activity_stream_loop(
             continue;
         }
 
+        let slug_pre = trade.slug.as_deref().unwrap_or("?");
+        let outcome_pre = trade.outcome.as_deref().unwrap_or("?");
+        info!(
+            "Copy | {} {} {} size {} @ {} | target {}",
+            trade.side, outcome_pre, slug_pre, trade.size, trade.price, proxy
+        );
         match copy_trade(
             &api,
             &trade,
@@ -174,6 +241,7 @@ async fn run_activity_stream_loop(
         .await
         {
             Ok(Some((size, price))) => {
+                info!("Copy done | {} {} | filled ~{} @ {}", trade.side, slug_pre, size, price);
                 {
                     let mut ent = entries.lock().await;
                     record_entry(&mut *ent, &trade.asset_id, size, price);
@@ -199,12 +267,12 @@ async fn run_activity_stream_loop(
                 let _ = notify_tx.send(());
             }
             Ok(None) => {
+                warn!(
+                    "Copy skipped | {} {} size {} @ {} | target {} (size/price zero or below buy_amount_limit?)",
+                    trade.side, slug_pre, trade.size, trade.price, proxy
+                );
                 let slug = trade.slug.as_deref().unwrap_or("?");
                 let outcome = trade.outcome.as_deref().unwrap_or("?");
-                info!(
-                    "LIVE | {} {} {} size {} @ {} | from {} | ok",
-                    trade.side, outcome, slug, trade.size, trade.price, proxy
-                );
                 web_state::push_trade(
                     web_state.clone(),
                     "LIVE",
@@ -214,7 +282,7 @@ async fn run_activity_stream_loop(
                     &trade.price,
                     slug,
                     Some(proxy.as_str()),
-                    Some("ok"),
+                    Some("skipped (size/limit)"),
                 )
                 .await;
                 let _ = notify_tx.send(());

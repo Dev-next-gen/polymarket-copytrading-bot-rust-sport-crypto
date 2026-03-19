@@ -503,7 +503,7 @@ async fn main() -> Result<()> {
     let targets = copy_config.target_addresses();
     if targets.is_empty() {
         anyhow::bail!(
-            "No copy targets. Set copy.target_address or copy.target_addresses in {}",
+            "No valid copy targets in {}. Set copy.target_address (or copy.target_addresses) to the leader's proxy wallet address (0x + 40 hex chars), not a profile URL. See README 'Finding a leader\\'s address'.",
             trade_path.display()
         );
     }
