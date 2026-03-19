@@ -291,25 +291,15 @@ pub async fn copy_trade(
     }
 
     log::info!(
-        "Placing market order: token_id={}.. amount={:.4} side={} type=FOK",
+        "Placing market order: token_id={}.. amount={:.4} side={} type=FAK",
         &trade.asset_id[..trade.asset_id.len().min(20)],
         amount_usd_or_shares,
         trade.side
     );
 
-    // Try FOK first (stricter), then fall back to FAK to increase fill probability.
-    match api
-        .place_market_order(&trade.asset_id, amount_usd_or_shares, &trade.side, Some("FOK"))
+    api.place_market_order(&trade.asset_id, amount_usd_or_shares, &trade.side, Some("FAK"))
         .await
-    {
-        Ok(_) => {}
-        Err(e) => {
-            log::warn!("FOK failed: {}; trying FAK", e);
-            api.place_market_order(&trade.asset_id, amount_usd_or_shares, &trade.side, Some("FAK"))
-                .await
-                .context("place_market_order failed (FOK and fallback FAK)")?;
-        }
-    }
+        .context("place_market_order failed")?;
 
     if is_buy {
         let price_f = price.to_f64().unwrap_or(0.0);
@@ -546,7 +536,7 @@ async fn run_exit_check(
 
     for (asset, size_b, cur_price) in &to_sell {
         let amount = (size_b * cur_price).to_f64().unwrap_or(0.0);
-        api.place_market_order(asset, amount, "SELL", Some("FOK"))
+        api.place_market_order(asset, amount, "SELL", Some("FAK"))
             .await
             .context("exit sell failed")?;
     }
