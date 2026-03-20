@@ -94,6 +94,8 @@ Create two files in the project root:
 }
 ```
 
+**API key and trading wallet:** Polymarket CLOB API keys are tied to one wallet. If you use `proxy_wallet_address` and `signature_type: 2`, create the API key in the Polymarket CLOB dashboard **for that proxy/Safe address**. If you use `signature_type: 0`, the key must be for the wallet that owns `private_key`. A mismatch causes *"Validation: invalid: signer"* when placing orders.
+
 **`trade.toml`** — who to copy and how. You must use the leader's **proxy wallet address** (0x + 40 hex characters), not a profile URL or username:
 
 ```toml
@@ -220,6 +222,20 @@ cargo run --release --bin main_copytrading
 ```
 
 Access from any device on your network at `http://<your-server-ip>:8000`. The binary is the single entry point — no separate frontend server needed.
+
+---
+
+## Troubleshooting: "Validation: invalid: signer"
+
+This error means the CLOB server rejected the order because the **order’s signer/maker** does not match the **wallet your API key is registered to**.
+
+**If you use a proxy** (`proxy_wallet_address` + `signature_type: 1` or `2`):
+
+1. **Your API key must be created for the proxy wallet**, not for the EOA (the address derived from `private_key`). When you created the key on Polymarket, you must have been connected with the **same** wallet as `proxy_wallet_address` (e.g. your Safe or Magic proxy). Check [polymarket.com/settings](https://polymarket.com/settings) — the address shown there is your proxy; create/derive the API key while that wallet is “active”.
+2. At startup the bot prints both **Proxy (funder)** and **EOA (from private_key)**. The API key must be for the **Proxy**, not the EOA. If you created the key while MetaMask (or another EOA) was connected, the key is tied to the EOA and you will get `invalid: signer` when trading via proxy.
+3. **If you’re sure the key is for the proxy** and the error persists, the CLOB SDK library (`lib.so`) may be building orders with the wrong maker (EOA instead of proxy). In that case you need a fixed SDK build that sets the order maker to the funder for `signature_type` 2, or use the official [Polymarket TypeScript](https://github.com/Polymarket/clob-client) or [Python](https://github.com/Polymarket/py-clob-client) client to place orders.
+
+**If you trade from an EOA** (`signature_type: 0`, no `proxy_wallet_address`): the API key must be for the same EOA as `private_key`. Create the key while connected with that EOA.
 
 ---
 

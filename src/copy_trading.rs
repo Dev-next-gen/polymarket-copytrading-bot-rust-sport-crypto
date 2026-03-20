@@ -301,12 +301,8 @@ pub async fn copy_trade(
         .await
         .context("place_market_order failed")?;
 
-    if is_buy {
-        let price_f = price.to_f64().unwrap_or(0.0);
-        Ok(Some((size_out, price_f)))
-    } else {
-        Ok(None)
-    }
+    let price_f = price.to_f64().unwrap_or(0.0);
+    Ok(Some((size_out, price_f)))
 }
 
 // ---------- Entry tracking (for exit loop) ----------
@@ -534,8 +530,10 @@ async fn run_exit_check(
         out
     };
 
-    for (asset, size_b, cur_price) in &to_sell {
-        let amount = (size_b * cur_price).to_f64().unwrap_or(0.0);
+    // For SELL orders the CLOB SDK expects `amount` to be token shares (not USDC value).
+    // `cur_price` is only used for the TP/SL/trailing trigger calculation above.
+    for (asset, size_b, _cur_price) in &to_sell {
+        let amount = size_b.to_f64().unwrap_or(0.0);
         api.place_market_order(asset, amount, "SELL", Some("FAK"))
             .await
             .context("exit sell failed")?;

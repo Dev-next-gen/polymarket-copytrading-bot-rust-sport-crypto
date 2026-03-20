@@ -119,12 +119,15 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    // Authenticate (needed for other operations)
-    println!("═══════════════════════════════════════════════════════════");
-    println!("🔐 Authenticating with Polymarket CLOB API...");
-    println!("═══════════════════════════════════════════════════════════");
-    api.authenticate().await?;
-    println!("✅ Authentication successful!\n");
+    // Authenticate only when we need CLOB API operations.
+    // On-chain approvals (`--approve-only`) do not require CLOB authentication.
+    if args.list || args.approve {
+        println!("═══════════════════════════════════════════════════════════");
+        println!("🔐 Authenticating with Polymarket CLOB API...");
+        println!("═══════════════════════════════════════════════════════════");
+        api.authenticate().await?;
+        println!("✅ Authentication successful!\n");
+    }
 
     // If list flag is set, scan portfolio and list all tokens
     if args.list {

@@ -4,6 +4,8 @@ use rust_decimal::Decimal;
 use polymarket_trading_bot::{PolymarketApi, Config};
 use polymarket_trading_bot::models::TokenPrice;
 
+const CLOB_UNITS_SCALE: u64 = 1_000_000;
+
 #[derive(Parser, Debug)]
 #[command(name = "test_sell")]
 #[command(about = "Test selling tokens from your portfolio")]
@@ -148,14 +150,17 @@ async fn main() -> Result<()> {
     
     match api.check_balance_allowance(token_id).await {
         Ok((balance, allowance)) => {
-            // Convert from base units (1e6) to actual shares
-            let balance_decimal = balance / Decimal::from(1_000_000u64);
-            let allowance_decimal = allowance / Decimal::from(1_000_000u64);
+            // CLOB returns conditional token balance/allowance in base units (1e6 scale).
+            // Convert to human shares for display and order sizing.
+            let balance_decimal = balance / Decimal::from(CLOB_UNITS_SCALE);
+            let allowance_decimal = allowance / Decimal::from(CLOB_UNITS_SCALE);
             let balance_f64 = f64::try_from(balance_decimal).unwrap_or(0.0);
             let allowance_f64 = f64::try_from(allowance_decimal).unwrap_or(0.0);
 
-            println!("   ✅ Balance: {:.6} shares", balance_f64);
-            println!("   ✅ Allowance: {:.6} shares", allowance_f64);
+            println!("   ✅ Raw Balance: {}", balance_decimal);
+            println!("   ✅ Raw Allowance: {}", allowance_decimal);
+            println!("   ✅ Balance (f64): {:.10} shares", balance_f64);
+            println!("   ✅ Allowance (f64): {:.10} shares", allowance_f64);
 
             if balance_f64 == 0.0 {
                 println!("   ⚠️  No balance for this token. Nothing to sell.");
@@ -211,11 +216,8 @@ async fn sell_token(
     
     match api.check_balance_allowance(token_id).await {
         Ok((balance_decimal, allowance_decimal)) => {
-            // Convert from base units (1e6) to actual shares
-            let balance_decimal_actual = balance_decimal / Decimal::from(1_000_000u64);
-            let allowance_decimal_actual = allowance_decimal / Decimal::from(1_000_000u64);
-            let balance_f64 = f64::try_from(balance_decimal_actual).unwrap_or(0.0);
-            let allowance_f64 = f64::try_from(allowance_decimal_actual).unwrap_or(0.0);
+            let balance_f64 = f64::try_from(balance_decimal / Decimal::from(CLOB_UNITS_SCALE)).unwrap_or(0.0);
+            let allowance_f64 = f64::try_from(allowance_decimal / Decimal::from(CLOB_UNITS_SCALE)).unwrap_or(0.0);
             
             println!("   📊 Balance & Allowance Check:");
             println!("      Token Balance: {:.6} shares", balance_f64);
@@ -245,9 +247,58 @@ async fn sell_token(
                 println!("      - Required for proxy wallets before selling tokens");
                 println!("      - Current allowance: {:.6} shares", allowance_f64);
                 println!("      - Required: {:.6} shares", shares_to_sell);
-                println!("   🔄 The SDK should handle approval automatically when placing the order.");
-                println!("   💡 If the order fails, you may need to manually approve on Polymarket UI.");
-                println!("   ⚠️  Proceeding anyway - SDK may auto-approve...");
+                println!("   🔄 Trying allowance cache refresh first...");
+                api.update_balance_allowance_for_sell(token_id).await?;
+                tokio::time::sleep(tokio::time::Duration::from_millis(800)).await;
+
+                let mut refreshed_allowance_ok = false;
+                match api.check_balance_allowance(token_id).await {
+                    Ok((_balance_decimal2, allowance_decimal2)) => {
+                        let allowance2_f64 = f64::try_from(allowance_decimal2 / Decimal::from(CLOB_UNITS_SCALE)).unwrap_or(0.0);
+                        println!("   🔍 Allowance after refresh: {:.6} shares", allowance2_f64);
+                        if allowance2_f64 >= shares_to_sell {
+                            refreshed_allowance_ok = true;
+                        }
+                    }
+                    Err(e) => {
+                        println!("   ⚠️  Allowance re-check after refresh failed: {}", e);
+                    }
+                }
+
+                if !refreshed_allowance_ok {
+                    let is_approved_for_all = api.check_is_approved_for_all().await.unwrap_or(false);
+                    if is_approved_for_all {
+                        println!(
+                            "   ⚠️  Allowance cache still shows 0, but setApprovalForAll is true."
+                        );
+                        println!(
+                            "   🔄 Proceeding with sell attempt anyway (CLOB backend can lag before allowance refresh appears)."
+                        );
+                    } else {
+                        println!("   🔄 setApprovalForAll is not set. Attempting on-chain approval...");
+                        api.set_approval_for_all_clob().await?;
+                        println!("   ✅ Approval submitted. Waiting 3s for chain confirmation...");
+                        tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+
+                        match api.check_balance_allowance(token_id).await {
+                            Ok((_balance_decimal2, allowance_decimal2)) => {
+                                let allowance2_f64 = f64::try_from(allowance_decimal2 / Decimal::from(CLOB_UNITS_SCALE)).unwrap_or(0.0);
+                                println!("   🔍 Allowance after approval: {:.6} shares", allowance2_f64);
+                                if allowance2_f64 < shares_to_sell {
+                                    println!(
+                                        "   ⚠️  Allowance still low after approval submit; proceeding with sell attempt to let SDK/CLOB retry."
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                println!(
+                                    "   ⚠️  Approval submitted but allowance re-check failed: {}. Proceeding with sell attempt.",
+                                    e
+                                );
+                            }
+                        }
+                    }
+                }
             } else {
                 println!("   ✅ Balance and allowance are sufficient");
             }

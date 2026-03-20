@@ -1,9 +1,9 @@
 use anyhow::{anyhow, Result};
 use futures_util::{SinkExt, StreamExt};
-use log::{info, warn};
+use log::{debug, info, warn};
 use std::collections::HashSet;
 use std::sync::Arc;
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::{broadcast, Mutex, Semaphore};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 use crate::copy_trading::{
@@ -43,6 +43,13 @@ fn payload_proxy_or_owner(payload: &serde_json::Value) -> Option<String> {
         }
     }
     None
+}
+
+fn parse_payload_timestamp_ms(trade: &LeaderTrade) -> Option<i64> {
+    let match_ts = trade.match_time.parse::<i64>().ok()?;
+    // The feed sometimes sends seconds, sometimes milliseconds.
+    let match_ms = if match_ts >= 1_000_000_000_000 { match_ts } else { match_ts * 1000 };
+    Some(match_ms)
 }
 
 fn activity_payload_to_leader_trade(p: &serde_json::Value) -> Option<LeaderTrade> {
@@ -92,11 +99,50 @@ async fn run_activity_stream_loop(
     entries: Arc<Mutex<HashMap<String, crate::copy_trading::Entry>>>,
     simulation: bool,
 ) -> Result<()> {
-    let (ws_stream, _) = connect_async(ACTIVITY_WS_URL).await?;
+    // Optional debug helper: log which proxyWallet values are arriving from the
+    // activity feed but don't match our configured targets.
+    // Default is off to avoid log spam.
+    let log_unmatched_proxies = std::env::var("LOG_UNMATCHED_PROXIES")
+        .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+        .unwrap_or(false);
+    let log_unmatched_proxies_limit: usize = std::env::var("LOG_UNMATCHED_PROXIES_LIMIT")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(20);
+    let mut unmatched_logged_count: usize = 0;
+    let log_match_lag = std::env::var("LOG_MATCH_LAG")
+        .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+        .unwrap_or(false);
+
+    // Prevent the websocket loop from being blocked by slow order placement.
+    let copy_trade_timeout_sec: u64 = std::env::var("COPY_TRADE_TIMEOUT_SEC")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(10);
+
+    let copy_trade_concurrency: usize = std::env::var("COPY_TRADE_CONCURRENCY")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(4)
+        .max(1);
+    let copy_trade_semaphore = Arc::new(Semaphore::new(copy_trade_concurrency));
+
+    info!("Activity stream | connecting to {}", ACTIVITY_WS_URL);
+    let connect_result = tokio::time::timeout(
+        tokio::time::Duration::from_secs(10),
+        connect_async(ACTIVITY_WS_URL),
+    )
+    .await;
+
+    let (ws_stream, _) = match connect_result {
+        Ok(r) => r?,
+        Err(_) => return Err(anyhow!("Activity stream | connect_async timeout after 10s")),
+    };
     let (mut write, mut read) = ws_stream.split();
 
     const SUBSCRIBE_MSG: &str = r#"{"action":"subscribe","subscriptions":[{"topic":"activity","type":"trades"}]}"#;
     write.send(Message::Text(SUBSCRIBE_MSG.to_string())).await?;
+    info!("Activity stream | subscribed to activity/trades");
 
     let mut seen: HashSet<String> = HashSet::new();
     let mut logged_unknown_proxy: HashSet<String> = HashSet::new();
@@ -148,11 +194,15 @@ async fn run_activity_stream_loop(
             }
         };
         if !targets_lower.contains(&proxy) {
-            if logged_unknown_proxy.insert(proxy.clone()) {
+            if log_unmatched_proxies
+                && logged_unknown_proxy.insert(proxy.clone())
+                && unmatched_logged_count < log_unmatched_proxies_limit
+            {
                 info!(
-                    "Activity from proxy {} is not in your target list. Add this address to copy.target_address (or copy.target_addresses) in trade.toml to copy this trader.",
+                    "Activity from proxy {} is not in your target list (set copy.target_address to the leader's proxyWallet).",
                     proxy
                 );
+                unmatched_logged_count += 1;
             }
             continue;
         }
@@ -203,6 +253,18 @@ async fn run_activity_stream_loop(
             continue;
         }
 
+        if log_match_lag {
+            if let Some(match_ms) = parse_payload_timestamp_ms(&trade) {
+                let now_ms = chrono::Utc::now().timestamp_millis();
+                let lag_ms = now_ms.saturating_sub(match_ms);
+                let lag_sec = (lag_ms as f64) / 1000.0;
+                info!(
+                    "Target match lag: {:.1}s (payload_ts_ms={}, now_ts_ms={}) for proxy {}",
+                    lag_sec, match_ms, now_ms, proxy
+                );
+            }
+        }
+
         if simulation {
             let slug = trade.slug.as_deref().unwrap_or("?");
             let outcome = trade.outcome.as_deref().unwrap_or("?");
@@ -232,81 +294,142 @@ async fn run_activity_stream_loop(
             "Copy | {} {} {} size {} @ {} | target {}",
             trade.side, outcome_pre, slug_pre, trade.size, trade.price, proxy
         );
-        match copy_trade(
-            &api,
-            &trade,
-            config.copy.size_multiplier,
-            config.filter.buy_amount_limit_in_usd,
-        )
-        .await
-        {
-            Ok(Some((size, price))) => {
-                info!("Copy done | {} {} | filled ~{} @ {}", trade.side, slug_pre, size, price);
-                {
-                    let mut ent = entries.lock().await;
-                    record_entry(&mut *ent, &trade.asset_id, size, price);
+
+        // IMPORTANT: do not await order placement inside the websocket read loop.
+        // Otherwise, slow/failed HTTP calls can make target detection appear delayed.
+        let multiplier = config.copy.size_multiplier;
+        let buy_amount_limit_usd = config.filter.buy_amount_limit_in_usd;
+
+        let api_cl = api.clone();
+        let web_state_cl = web_state.clone();
+        let notify_tx_cl = notify_tx.clone();
+        let entries_cl = entries.clone();
+        let semaphore_cl = copy_trade_semaphore.clone();
+
+        let trade_task = trade;
+        let proxy_task = proxy;
+
+        tokio::spawn(async move {
+            // Limit in-flight copy executions so we don't overwhelm the CLOB API.
+            let permit = semaphore_cl.acquire_owned().await;
+            if permit.is_err() {
+                return;
+            }
+            let _permit = permit.ok();
+
+            let slug = trade_task.slug.as_deref().unwrap_or("?");
+            let outcome = trade_task.outcome.as_deref().unwrap_or("?");
+
+            let copy_fut = copy_trade(
+                &api_cl,
+                &trade_task,
+                multiplier,
+                buy_amount_limit_usd,
+            );
+
+            match tokio::time::timeout(
+                tokio::time::Duration::from_secs(copy_trade_timeout_sec),
+                copy_fut,
+            )
+            .await
+            {
+                Err(_) => {
+                    warn!(
+                        "Copy timed out after {}s | {} {} {} @ {} | target {}",
+                        copy_trade_timeout_sec,
+                        trade_task.side,
+                        slug,
+                        outcome,
+                        trade_task.size,
+                        proxy_task
+                    );
+                    let _ = web_state::push_trade(
+                        web_state_cl,
+                        "LIVE",
+                        &trade_task.side,
+                        outcome,
+                        &trade_task.size,
+                        &trade_task.price,
+                        slug,
+                        Some(proxy_task.as_str()),
+                        Some("timeout"),
+                    )
+                    .await;
+                    let _ = notify_tx_cl.send(());
                 }
-                let slug = trade.slug.as_deref().unwrap_or("?");
-                let outcome = trade.outcome.as_deref().unwrap_or("?");
-                info!(
-                    "LIVE | {} {} {} size {} @ {} | from {} | ok",
-                    trade.side, outcome, slug, trade.size, trade.price, proxy
-                );
-                web_state::push_trade(
-                    web_state.clone(),
-                    "LIVE",
-                    &trade.side,
-                    outcome,
-                    &trade.size,
-                    &trade.price,
-                    slug,
-                    Some(proxy.as_str()),
-                    Some("ok"),
-                )
-                .await;
-                let _ = notify_tx.send(());
+                Ok(Ok(Some((size, price)))) => {
+                    info!(
+                        "Copy done | {} {} | filled ~{} @ {}",
+                        trade_task.side, slug, size, price
+                    );
+                    // Track entries only for BUY fills; SELL fills should not add/average entries.
+                    if trade_task.side == "BUY" {
+                        let mut ent = entries_cl.lock().await;
+                        record_entry(&mut *ent, &trade_task.asset_id, size, price);
+                    }
+                    info!(
+                        "LIVE | {} {} {} size {} @ {} | from {} | ok",
+                        trade_task.side, outcome, slug, trade_task.size, trade_task.price, proxy_task
+                    );
+                    let _ = web_state::push_trade(
+                        web_state_cl,
+                        "LIVE",
+                        &trade_task.side,
+                        outcome,
+                        &trade_task.size,
+                        &trade_task.price,
+                        slug,
+                        Some(proxy_task.as_str()),
+                        Some("ok"),
+                    )
+                    .await;
+                    let _ = notify_tx_cl.send(());
+                }
+                Ok(Ok(None)) => {
+                    warn!(
+                        "Copy skipped | {} {} size {} @ {} | target {} (size/price zero or below buy_amount_limit?)",
+                        trade_task.side,
+                        slug,
+                        trade_task.size,
+                        trade_task.price,
+                        proxy_task
+                    );
+                    let _ = web_state::push_trade(
+                        web_state_cl,
+                        "LIVE",
+                        &trade_task.side,
+                        outcome,
+                        &trade_task.size,
+                        &trade_task.price,
+                        slug,
+                        Some(proxy_task.as_str()),
+                        Some("skipped (size/limit)"),
+                    )
+                    .await;
+                    let _ = notify_tx_cl.send(());
+                }
+                Ok(Err(e)) => {
+                    warn!(
+                        "LIVE | {} {} | from {} | FAILED: {}",
+                        trade_task.side, slug, proxy_task, e
+                    );
+                    let copy_status = format!("FAILED: {}", e);
+                    let _ = web_state::push_trade(
+                        web_state_cl,
+                        "LIVE",
+                        &trade_task.side,
+                        outcome,
+                        &trade_task.size,
+                        &trade_task.price,
+                        slug,
+                        Some(proxy_task.as_str()),
+                        Some(copy_status.as_str()),
+                    )
+                    .await;
+                    let _ = notify_tx_cl.send(());
+                }
             }
-            Ok(None) => {
-                warn!(
-                    "Copy skipped | {} {} size {} @ {} | target {} (size/price zero or below buy_amount_limit?)",
-                    trade.side, slug_pre, trade.size, trade.price, proxy
-                );
-                let slug = trade.slug.as_deref().unwrap_or("?");
-                let outcome = trade.outcome.as_deref().unwrap_or("?");
-                web_state::push_trade(
-                    web_state.clone(),
-                    "LIVE",
-                    &trade.side,
-                    outcome,
-                    &trade.size,
-                    &trade.price,
-                    slug,
-                    Some(proxy.as_str()),
-                    Some("skipped (size/limit)"),
-                )
-                .await;
-                let _ = notify_tx.send(());
-            }
-            Err(e) => {
-                let slug = trade.slug.as_deref().unwrap_or("?");
-                warn!("LIVE | {} {} | from {} | FAILED: {}", trade.side, slug, proxy, e);
-                let outcome = trade.outcome.as_deref().unwrap_or("?");
-                let copy_status = format!("FAILED: {}", e);
-                web_state::push_trade(
-                    web_state.clone(),
-                    "LIVE",
-                    &trade.side,
-                    outcome,
-                    &trade.size,
-                    &trade.price,
-                    slug,
-                    Some(proxy.as_str()),
-                    Some(copy_status.as_str()),
-                )
-                .await;
-                let _ = notify_tx.send(());
-            }
-        }
+        });
     }
     ping_handle.abort();
     Err(anyhow!("WebSocket stream ended"))

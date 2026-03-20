@@ -7,6 +7,7 @@
 .env.*
 !.env.example
 config.json
+config2.json
 *.pem
 
 # Logs and runtime
