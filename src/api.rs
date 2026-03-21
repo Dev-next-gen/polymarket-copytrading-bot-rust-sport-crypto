@@ -154,7 +154,7 @@ impl PolymarketApi {
 
     async fn ensure_clob_client(&self) -> Result<u64> {
         let notify = Arc::clone(&self.clob_client_notify);
-        println!("ensure_clob_client");
+
         loop {
             let (is_creator, jh) = {
                 let mut guard = self.clob_client_state.lock().await;
