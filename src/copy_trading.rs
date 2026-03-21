@@ -290,10 +290,15 @@ pub async fn copy_trade(
         return Ok(None);
     }
 
+    let log_amount = if is_buy {
+        crate::api::PolymarketApi::normalize_market_buy_usd(amount_usd_or_shares)
+    } else {
+        amount_usd_or_shares
+    };
     log::info!(
         "Placing market order: token_id={}.. amount={:.4} side={} type=FAK",
         &trade.asset_id[..trade.asset_id.len().min(20)],
-        amount_usd_or_shares,
+        log_amount,
         trade.side
     );
 

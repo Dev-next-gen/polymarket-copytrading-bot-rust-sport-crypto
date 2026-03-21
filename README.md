@@ -184,6 +184,8 @@ The agent follows the **Monitor → Analyze** method (inspired by [Mahoraga](htt
 
 No execution — research and guidance only. You decide when to act.
 
+**Chat UI:** On **Agent**, the **message list** scrolls in the center column; **suggestion pills and the query bar** stay at the bottom of that column (flex layout). The app relies on the `.flex { display: flex; }` utility in `style.css` — if that rule is commented out, the whole UI layout breaks. Rebuild with `trunk build --release` after UI changes.
+
 ---
 
 ## Config Reference

@@ -62,6 +62,9 @@ fn polygon() -> u64 {
     clob_sdk::polygon()
 }
 
+/// CLOB conditional token balances are returned in 1e6 base units (see `trader.rs`, `test_sell.rs`).
+const CLOB_CONDITIONAL_UNITS_PER_SHARE: u64 = 1_000_000;
+
 pub struct PolymarketApi {
     client: Client,
     gamma_url: String,
@@ -90,7 +93,19 @@ impl PolymarketApi {
     fn normalize_buy_usdc_amount(amount: f64) -> f64 {
         // CLOB market BUY supports max 2 decimals for maker amount.
         // Truncate (not round up) to avoid accidental overspend.
-        (amount * 100.0).floor() / 100.0
+        let mut n = (amount * 100.0).floor() / 100.0;
+        // CLOB rejects marketable BUY when effective notional is just under $1
+        // (e.g. we send $1.00, server reports "$0.99, min size: $1"). Bumping the
+        // $1 cliff to $1.01 avoids a failed round-trip + retry on the hot path.
+        if n >= 1.0 && n < 1.02 {
+            n = 1.01;
+        }
+        n
+    }
+
+    /// Same normalization applied inside `place_market_order` / `_fast` for BUY (for logging / previews).
+    pub fn normalize_market_buy_usd(amount: f64) -> f64 {
+        Self::normalize_buy_usdc_amount(amount)
     }
 
     fn is_buy_min_size_error(err: &str) -> bool {
@@ -139,7 +154,7 @@ impl PolymarketApi {
 
     async fn ensure_clob_client(&self) -> Result<u64> {
         let notify = Arc::clone(&self.clob_client_notify);
-
+        println!("ensure_clob_client");
         loop {
             let (is_creator, jh) = {
                 let mut guard = self.clob_client_state.lock().await;
@@ -888,6 +903,49 @@ impl PolymarketApi {
         };
         let _ = is_approved_for_all;
         Ok((balance, allowance))
+    }
+
+    /// Human-readable conditional token balance in shares (CLOB raw / 1e6).
+    pub async fn conditional_token_balance_shares(&self, token_id: &str) -> Result<f64> {
+        let balance = self.check_balance_only(token_id).await?;
+        let shares = balance / rust_decimal::Decimal::from(CLOB_CONDITIONAL_UNITS_PER_SHARE);
+        f64::try_from(shares).context("balance as f64")
+    }
+
+    /// If requested SELL size exceeds CLOB-reported balance, reduce to full remaining balance.
+    /// No-op if balance fetch fails (caller may still hit CLOB errors).
+    async fn clamp_sell_to_available_shares(
+        &self,
+        token_id: &str,
+        current_amount: &mut f64,
+        context: &str,
+    ) -> Result<()> {
+        let avail = match self.conditional_token_balance_shares(token_id).await {
+            Ok(v) => v,
+            Err(e) => {
+                log::debug!("{}: could not read conditional balance (skip clamp): {}", context, e);
+                return Ok(());
+            }
+        };
+        if *current_amount <= avail + 1e-9 {
+            return Ok(());
+        }
+        if avail < 0.01 {
+            anyhow::bail!(
+                "{}: sell size {:.8} exceeds CLOB balance {:.8} (< 0.01 min lot — nothing to sell)",
+                context,
+                *current_amount,
+                avail
+            );
+        }
+        log::info!(
+            "{}: sell {:.8} > balance {:.8} shares — clamping to full balance",
+            context,
+            *current_amount,
+            avail
+        );
+        *current_amount = avail;
+        Ok(())
     }
 
     pub async fn update_balance_allowance_for_sell(&self, token_id: &str) -> Result<()> {
@@ -1648,6 +1706,10 @@ impl PolymarketApi {
         let handle = self.ensure_clob_client().await?;
         let max_retries = if is_buy { 2 } else { 6 };
         let mut current_amount = normalized_amount;
+        if !is_buy {
+            self.clamp_sell_to_available_shares(token_id, &mut current_amount, "place_market_order")
+                .await?;
+        }
         for attempt in 1..=max_retries {
             let amount_str = format!("{:.8}", current_amount);
             match clob_sdk::post_market_order(handle, token_id, side, &amount_str, is_buy, ot) {
@@ -1688,6 +1750,14 @@ impl PolymarketApi {
                     }
                     if is_allowance && !is_buy && attempt < max_retries {
                         let _ = self.update_balance_allowance_for_sell(token_id).await;
+                        if err_s.contains("balance") {
+                            self.clamp_sell_to_available_shares(
+                                token_id,
+                                &mut current_amount,
+                                "place_market_order retry",
+                            )
+                            .await?;
+                        }
                         tokio::time::sleep(tokio::time::Duration::from_millis(700 * attempt as u64)).await;
                         continue;
                     }
@@ -1720,7 +1790,6 @@ impl PolymarketApi {
         } else {
             amount
         };
-        let amount_str = format!("{:.8}", normalized_amount);
         if is_buy && normalized_amount <= 0.0 {
             anyhow::bail!(
                 "Buy amount {} is below minimum precision after normalization (2 decimals).",
@@ -1738,6 +1807,8 @@ impl PolymarketApi {
         let handle = self.ensure_clob_client().await?;
         let max_retries = if is_buy { 2 } else { 6 };
         let mut current_amount = normalized_amount;
+        // Copy-trading hot path: skip proactive SELL balance fetch (saves one CLOB RTT).
+        // Oversized SELLs still clamp on "not enough balance / allowance" retries below.
         for attempt in 1..=max_retries {
             let amount_str = format!("{:.8}", current_amount);
             match clob_sdk::post_market_order(handle, token_id, side, &amount_str, is_buy, ot) {
@@ -1778,6 +1849,14 @@ impl PolymarketApi {
                     }
                     if is_allowance && !is_buy && attempt < max_retries {
                         let _ = self.update_balance_allowance_for_sell(token_id).await;
+                        if err_s.contains("balance") {
+                            self.clamp_sell_to_available_shares(
+                                token_id,
+                                &mut current_amount,
+                                "place_market_order_fast retry",
+                            )
+                            .await?;
+                        }
                         tokio::time::sleep(tokio::time::Duration::from_millis(400 * attempt as u64)).await;
                         continue;
                     }

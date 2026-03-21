@@ -189,8 +189,8 @@ fn Layout(
                 <header class="main-content-header shrink-0 flex items-center gap-3">{header}</header>
                 <div class="flex flex-1 min-h-0 overflow-hidden gap-0 flex-col">
                     {match aside {
-                        Some(a) => view! { <div class="flex flex-1 min-h-0 gap-4"><div class="flex-1 min-w-0 overflow-hidden flex flex-col">{main}</div><aside class="w-full md:w-[380px] shrink-0 overflow-hidden flex flex-col">{a}</aside></div> }.into_view(),
-                        None => view! { <div class="flex-1 min-w-0 overflow-hidden flex flex-col">{main}</div> }.into_view(),
+                        Some(a) => view! { <div class="flex flex-1 min-h-0 gap-4"><div class="flex-1 min-w-0 min-h-0 overflow-hidden flex flex-col">{main}</div><aside class="w-full md:w-[380px] shrink-0 min-h-0 overflow-hidden flex flex-col">{a}</aside></div> }.into_view(),
+                        None => view! { <div class="flex-1 min-w-0 min-h-0 overflow-hidden flex flex-col">{main}</div> }.into_view(),
                     }}
                 </div>
             </div>
@@ -696,7 +696,7 @@ fn AgentPage(
                 </div>
             </aside>
             <div class="agent-chat-main">
-                <div class="agent-chat-scroll p-4 flex flex-col">
+                <div class="agent-chat-scroll">
             <div class="agent-header">
                 <span class="agent-name">{AGENT_NAME}</span>
                 <div class="agent-dropdown-wrap">

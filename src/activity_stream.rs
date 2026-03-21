@@ -1,10 +1,10 @@
 use anyhow::{anyhow, Result};
 use futures_util::{SinkExt, StreamExt};
-use log::{debug, info, warn};
+use log::{info, warn};
 use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex, Semaphore};
-use tokio_tungstenite::{connect_async, tungstenite::Message};
+use tokio_tungstenite::{connect_async_with_config, tungstenite::Message};
 
 use crate::copy_trading::{
     copy_trade, record_entry, should_copy_trade, CopyTradingConfig, LeaderTrade,
@@ -12,6 +12,8 @@ use crate::copy_trading::{
 use crate::web_state;
 use std::collections::HashMap;
 
+// Polymarket's public activity/trades feed can lag on-chain fills. Set LOG_MATCH_LAG=1
+// to log (wall_clock − payload time) for matched targets and separate feed vs bot delay.
 const ACTIVITY_WS_URL: &str = "wss://ws-live-data.polymarket.com";
 const PING_INTERVAL_SECS: u64 = 5;
 const RECONNECT_DELAY_SECS: u64 = 5;
@@ -128,9 +130,11 @@ async fn run_activity_stream_loop(
     let copy_trade_semaphore = Arc::new(Semaphore::new(copy_trade_concurrency));
 
     info!("Activity stream | connecting to {}", ACTIVITY_WS_URL);
+    // disable_nagle=true: default connect_async leaves Nagle on, which can add tens of ms
+    // of delay on small WS frames (trade notifications).
     let connect_result = tokio::time::timeout(
         tokio::time::Duration::from_secs(10),
-        connect_async(ACTIVITY_WS_URL),
+        connect_async_with_config(ACTIVITY_WS_URL, None, true),
     )
     .await;
 
@@ -162,6 +166,10 @@ async fn run_activity_stream_loop(
         let msg = msg?;
         let text = match msg {
             Message::Text(t) => t,
+            Message::Binary(b) => match String::from_utf8(b) {
+                Ok(s) => s,
+                Err(_) => continue,
+            },
             _ => continue,
         };
         if text == "pong" || !text.contains("payload") {
@@ -237,19 +245,31 @@ async fn run_activity_stream_loop(
                 "Filtered | {} {} {} size {} @ {} | {} (entry_trade_sec / revert_trade / trade_sec_from_resolve)",
                 trade.side, outcome, slug, trade.size, trade.price, proxy
             );
-            web_state::push_trade(
-                web_state.clone(),
-                "LIVE",
-                &trade.side,
-                outcome,
-                &trade.size,
-                &trade.price,
-                slug,
-                Some(proxy.as_str()),
-                Some("filtered"),
-            )
-            .await;
-            let _ = notify_tx.send(());
+            // Do not await UI updates on the WS read path — they can stall processing
+            // of the global activity feed and make copy-trading feel "late".
+            let ws = web_state.clone();
+            let nt = notify_tx.clone();
+            let side = trade.side.clone();
+            let size = trade.size.clone();
+            let price = trade.price.clone();
+            let slug_s = slug.to_string();
+            let outcome_s = outcome.to_string();
+            let proxy_s = proxy.clone();
+            tokio::spawn(async move {
+                web_state::push_trade(
+                    ws,
+                    "LIVE",
+                    &side,
+                    &outcome_s,
+                    &size,
+                    &price,
+                    &slug_s,
+                    Some(proxy_s.as_str()),
+                    Some("filtered"),
+                )
+                .await;
+                let _ = nt.send(());
+            });
             continue;
         }
 
@@ -272,19 +292,29 @@ async fn run_activity_stream_loop(
                 "SIM | {} {} {} size {} @ {} | {} skipped",
                 trade.side, outcome, slug, trade.size, trade.price, proxy
             );
-            web_state::push_trade(
-                web_state.clone(),
-                "SIM",
-                &trade.side,
-                outcome,
-                &trade.size,
-                &trade.price,
-                slug,
-                Some(proxy.as_str()),
-                Some("skipped"),
-            )
-            .await;
-            let _ = notify_tx.send(());
+            let ws = web_state.clone();
+            let nt = notify_tx.clone();
+            let side = trade.side.clone();
+            let size = trade.size.clone();
+            let price = trade.price.clone();
+            let slug_s = slug.to_string();
+            let outcome_s = outcome.to_string();
+            let proxy_s = proxy.clone();
+            tokio::spawn(async move {
+                web_state::push_trade(
+                    ws,
+                    "SIM",
+                    &side,
+                    &outcome_s,
+                    &size,
+                    &price,
+                    &slug_s,
+                    Some(proxy_s.as_str()),
+                    Some("skipped"),
+                )
+                .await;
+                let _ = nt.send(());
+            });
             continue;
         }
 
