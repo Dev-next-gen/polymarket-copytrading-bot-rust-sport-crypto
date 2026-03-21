@@ -661,11 +661,7 @@ fn AgentPage(
         "I'm your analysis layer — Mahoraga-style: Monitor and Analyze only, no execution. I'll research every question (signals, sentiment, catalysts, red flags) and give you clear guidance. Until then, ask for a market overview or risk check."
     };
     let conversations = [
-        ("Portfolio Analysis", "2m ago"),
-        ("BTC Entry Strategy", "14m ago"),
-        ("Risk Parameters Review", "1h ago"),
-        ("Market Sentiment Check", "3h ago"),
-        ("DCA Configuration", "Yesterday"),
+        ("Portfolio Analysis", "2m ago")
     ];
     let query_input_ref = NodeRef::<html::Input>::new();
     let has_focused = create_rw_signal(false);
