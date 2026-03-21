@@ -31,3 +31,5 @@ frontend/target/
 Thumbs.db
 
 # Cargo.lock is usually committed for apps (reproducible builds)
+
+STRUCTURE_README.md
