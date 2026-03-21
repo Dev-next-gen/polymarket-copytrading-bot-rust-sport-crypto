@@ -132,8 +132,8 @@ OPENROUTER_API_KEY=sk-or-...
 # Build the frontend (once)
 cd frontend && trunk build --release && cd ..
 
-# Run
-cargo run --release --bin main_copytrading
+# Run (default binary is copy-trading; uses config.json + trade.toml in cwd)
+cargo run --release
 ```
 
 Open **http://localhost:8000** — that's it. Dashboard, agent, logs, portfolio, everything is there.
@@ -141,7 +141,7 @@ Open **http://localhost:8000** — that's it. Dashboard, agent, logs, portfolio,
 ### 4. Simulation mode (no real orders)
 
 ```bash
-cargo run --release --bin main_copytrading -- --simulation
+cargo run --release -- --simulation
 ```
 
 Perfect for testing your setup, exploring the UI, and evaluating traders before risking capital.
@@ -220,7 +220,7 @@ Top-level: `clob_host`, `chain_id`, `port`, `simulation`.
 cd frontend && trunk build --release && cd ..
 
 # 2. Run (serves both API and UI on one port)
-cargo run --release --bin main_copytrading
+cargo run --release
 ```
 
 Access from any device on your network at `http://<your-server-ip>:8000`. The binary is the single entry point — no separate frontend server needed.

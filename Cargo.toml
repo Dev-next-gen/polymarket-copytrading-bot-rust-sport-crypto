@@ -2,7 +2,8 @@
 name = "polymarket-trading-bot"
 version = "0.1.0"
 edition = "2021"
-default-run = "main_sports_trailing"
+# Plain `cargo run` / `cargo run --release` use this binary (defaults: --config config.json --trade-config trade.toml).
+default-run = "main_copytrading"
 
 [[bin]]
 name = "main_sports_trailing"
