@@ -73,6 +73,23 @@ async fn fetch_state() -> Result<BotState, String> {
         .map_err(|e| e.to_string())
 }
 
+#[derive(Clone, Debug, Deserialize)]
+pub struct BtcSpotPrice {
+    pub usd: f64,
+    pub source: String,
+}
+
+/// Spot BTC/USD via backend `/api/btc_price` (Binance proxy).
+async fn fetch_btc_price() -> Result<BtcSpotPrice, String> {
+    gloo_net::http::Request::get("/api/btc_price")
+        .send()
+        .await
+        .map_err(|e| e.to_string())?
+        .json()
+        .await
+        .map_err(|e| e.to_string())
+}
+
 async fn fetch_leaderboard(
     category: &str,
     time_period: &str,
@@ -927,6 +944,24 @@ fn PortfolioPage(state: Option<BotState>) -> impl IntoView {
 
 #[component]
 fn DashboardPage(state: Option<BotState>) -> impl IntoView {
+    let btc_usd = create_rw_signal(String::from("…"));
+    create_effect(move |_| {
+        use std::sync::Once;
+        static START_BTC_POLL: Once = Once::new();
+        let btc_usd = btc_usd.clone();
+        START_BTC_POLL.call_once(move || {
+            spawn_local(async move {
+                loop {
+                    match fetch_btc_price().await {
+                        Ok(p) => btc_usd.set(format!("${:.2}", p.usd)),
+                        Err(_) => btc_usd.set("—".to_string()),
+                    }
+                    gloo_timers::future::TimeoutFuture::new(30_000).await;
+                }
+            });
+        });
+    });
+
     let mode = state.as_ref().map(|s| s.status.mode.clone()).unwrap_or_else(|| "—".to_string());
     let targets = state.as_ref().map(|s| s.status.targets).unwrap_or(0);
     let wallet = state.as_ref().and_then(|s| s.status.wallet.clone()).unwrap_or_default();
@@ -986,6 +1021,14 @@ fn DashboardPage(state: Option<BotState>) -> impl IntoView {
                 </section>
 
                 <div class="dashboard-side">
+                    <section class="dashboard-card card dashboard-btc-card">
+                        <h2 class="dashboard-section-title">"Bitcoin spot"</h2>
+                        <p class="dashboard-metric dashboard-btc-row">
+                            <span class="dashboard-btc-label">"BTC / USD"</span>
+                            <span class="dashboard-btc-value tabular-nums">{move || btc_usd.get()}</span>
+                        </p>
+                        <p class="dashboard-btc-note">"Binance index · updates ~30s"</p>
+                    </section>
                     <section class="dashboard-card card">
                         <h2 class="dashboard-section-title">"Portfolio"</h2>
                         <p class="dashboard-metric">{format!("{} position(s) active", positions_count)}</p>

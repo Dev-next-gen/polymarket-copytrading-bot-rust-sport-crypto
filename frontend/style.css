@@ -241,6 +241,20 @@ body {
 .dashboard-actions { display: flex; flex-direction: column; gap: 0.5rem; }
 .dashboard-action-btn { text-align: center; text-decoration: none; }
 
+/* Dashboard: live BTC spot (via /api/btc_price) */
+.dashboard-btc-card { }
+.dashboard-btc-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin: 0 0 0.35rem 0;
+}
+.dashboard-btc-label { font-size: 0.8125rem; color: var(--text-muted); }
+.dashboard-btc-value { font-size: 1.25rem; font-weight: 700; color: var(--text); letter-spacing: -0.02em; }
+.dashboard-btc-note { font-size: 0.6875rem; color: var(--text-dim); margin: 0; }
+
 /* Layout & flex — .flex must stay enabled or flex-1 / flex-col do nothing */
 /* .flex { display: flex; } */
 .flex-col { flex-direction: column; }

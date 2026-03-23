@@ -18,7 +18,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{broadcast, oneshot, Mutex};
 use tower_http::services::ServeDir;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use polymarket_trading_bot::activity_stream;
 use polymarket_trading_bot::clob_sdk;
@@ -390,6 +390,51 @@ async fn api_agent_chat(
     response.map(Json)
 }
 
+/// Spot BTC/USD (USDT) from Binance public API — proxied so the WASM UI avoids CORS.
+#[derive(Serialize)]
+struct BtcPriceResponse {
+    usd: f64,
+    #[serde(rename = "source")]
+    source: &'static str,
+}
+
+async fn api_btc_price() -> Result<Json<BtcPriceResponse>, (StatusCode, String)> {
+    #[derive(Deserialize)]
+    struct BinanceTicker {
+        price: String,
+    }
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(8))
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .build()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let resp = client
+        .get("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT")
+        .send()
+        .await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, format!("BTC request: {e}")))?;
+    if !resp.status().is_success() {
+        return Err((
+            StatusCode::BAD_GATEWAY,
+            format!("BTC HTTP {}", resp.status()),
+        ));
+    }
+    let t: BinanceTicker = resp
+        .json()
+        .await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, format!("BTC JSON: {e}")))?;
+    let usd: f64 = t
+        .price
+        .parse()
+        .map_err(|e: std::num::ParseFloatError| {
+            (StatusCode::BAD_GATEWAY, format!("BTC parse: {e}"))
+        })?;
+    Ok(Json(BtcPriceResponse {
+        usd,
+        source: "binance",
+    }))
+}
+
 async fn api_state(State(app): State<AppState>) -> axum::response::Response {
     let state = web_state::get_state(app.web).await;
     let mut res = Json(state).into_response();
@@ -454,6 +499,7 @@ fn spawn_web_server(state: SharedState, notify: NotifyTx, port: u16, ui_dir: Pat
         let serve_dir = ServeDir::new(&ui_dir);
         let app = Router::new()
             .route("/api/state", get(api_state))
+            .route("/api/btc_price", get(api_btc_price))
             .route("/api/state/stream", get(sse_state_updates))
             .route("/api/leaderboard", get(api_leaderboard))
             .route("/api/agent/providers", get(api_agent_providers))
