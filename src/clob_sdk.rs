@@ -19,25 +19,59 @@ static LIB: OnceLock<Result<Library, libloading::Error>> = OnceLock::new();
 static LOADED_PATH: OnceLock<String> = OnceLock::new();
 
 fn load_lib() -> Result<&'static Library> {
-    let path = std::env::var("LIBCOB_SDK_SO")
-        .ok()
-        .filter(|p| std::path::Path::new(p).exists())
+    let env_path = [
+        // Backward compatibility.
+        "LIBCOB_SDK_SO",
+        // Preferred generic variable (works for both .so and .dll).
+        "LIBCLOB_SDK_LIB",
+        // Additional aliases.
+        "LIBCLOB_SDK_SO",
+        "LIBCOB_SDK_LIB",
+    ]
+    .into_iter()
+    .find_map(|name| std::env::var(name).ok())
+    .filter(|p| std::path::Path::new(p).exists());
+
+    let path = env_path
         .or_else(|| {
             #[cfg(not(target_os = "windows"))]
             let candidates = [
                 "lib/lib.so",
                 "src/lib/lib.so",
             ];
-            #[cfg(not(target_os = "windows"))]
+            #[cfg(target_os = "windows")]
+            let candidates = [
+                "lib/lib.dll",
+                "src/lib/lib.dll",
+            ];
             let found = candidates
                 .into_iter()
                 .find(|p| std::path::Path::new(p).exists())
                 .map(String::from);
-            #[cfg(target_os = "windows")]
-            let found = None;
             found
         })
-        .context("CLOB SDK .so not found. Set LIBCOB_SDK_SO or place lib.so in ./lib/")?;
+        .context(
+            "CLOB SDK library not found. Set LIBCLOB_SDK_LIB (or LIBCOB_SDK_SO) to the full library path, \
+             or place lib.so/lib.dll in ./lib/ (or ./src/lib/).",
+        )?;
+
+    #[cfg(target_os = "windows")]
+    if path.to_ascii_lowercase().ends_with(".so") {
+        anyhow::bail!(
+            "Windows cannot load a .so CLOB SDK library ({}). Provide a .dll via LIBCLOB_SDK_LIB \
+             or place lib.dll in ./lib/.",
+            path
+        );
+    }
+    #[cfg(not(target_os = "windows"))]
+    if path.to_ascii_lowercase().ends_with(".dll") {
+        anyhow::bail!(
+            "Linux/macOS cannot load a .dll CLOB SDK library ({}). Provide a .so via LIBCLOB_SDK_LIB \
+             or place lib.so in ./lib/.",
+            path
+        );
+    }
+
     let lib = LIB
         .get_or_init(|| unsafe { Library::new(&path) })
         .as_ref()
