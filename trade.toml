@@ -12,10 +12,18 @@ simulation = false
 [copy]
 # Leader address(es) to copy
 target_address = [
-    "0x248a26224C346fDB71D6c91DD768fCdd1c88a63B"
+    "0x99ddb04e62a8362d4606dd44508be6ec584b2add"
+]
+# For these leaders only: first BUY per market is copied (by slug; else condition id; else token).
+# Add any choppy wallet here; other targets copy every trade as usual. Resets if the bot restarts.
+once_per_slug_addresses = [
+    "0x99ddb04e62a8362d4606dd44508be6ec584b2add"
 ]
 revert_trade = false
-size_multiplier = 1
+size_multiplier = 0
+# Fixed USD per copy (0 = off). When set, each BUY uses this USDC notional; each SELL sells up to
+# this much USD in shares at the trade price (capped by the leader's sell size). Ignores size_multiplier.
+copy_fixed_usd = 7
 # How often to refresh positions in the Web UI (seconds). Copy-trading uses the
 # Polymarket activity WebSocket for fills, not this poll. Lower = snappier portfolio UI only.
 poll_interval_sec = 0.5

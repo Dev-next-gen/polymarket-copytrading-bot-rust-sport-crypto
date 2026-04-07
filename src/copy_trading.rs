@@ -1,8 +1,9 @@
-use anyhow::{Context, Result};
+use anyhow::{Context, Error, Result};
 use chrono::{DateTime, Utc};
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::error::Error as StdError;
 use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -11,6 +12,53 @@ use tokio::sync::Mutex;
 fn is_valid_eth_address(s: &str) -> bool {
     let s = s.strip_prefix("0x").unwrap_or(s);
     s.len() == 40 && s.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+/// Max attempts for `place_market_order_fast` on the copy path (no delay between tries).
+/// Override with `COPY_ORDER_INSTANT_RETRIES` (clamped 1–30, default 5).
+fn copy_order_instant_max_attempts() -> u32 {
+    std::env::var("COPY_ORDER_INSTANT_RETRIES")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(5)
+        .clamp(1, 30)
+}
+
+fn copy_market_order_error_chain_text(e: &Error) -> String {
+    let mut parts = vec![e.to_string()];
+    let mut src = e.source();
+    while let Some(s) = src {
+        parts.push(s.to_string());
+        src = s.source();
+    }
+    parts.join(" ")
+}
+
+/// Errors where an immediate retry is unlikely to help.
+fn copy_market_order_error_is_final(msg: &str) -> bool {
+    let m = msg.to_ascii_lowercase();
+    // No liquidity — retrying won't create sellers.
+    if m.contains("no opposing orders") {
+        return true;
+    }
+    // Market closed / resolved — orderbook no longer exists.
+    if m.contains("no orderbook exists") || m.contains("404") || m.contains("not found") {
+        return true;
+    }
+    // Auth errors — retrying with the same key won't fix a 401.
+    if m.contains("unauthorized") || m.contains("invalid api key") || m.contains("401") {
+        return true;
+    }
+    m.contains("invalid signer")
+        || m.contains("clob rejected order")
+        || m.contains("insufficient balance")
+        || m.contains("insufficient usdc")
+        || m.contains("invalid order side")
+        || m.contains("invalid order_type")
+        || m.contains("below minimum precision")
+        || m.contains("below minimum lot size")
+        || m.contains("invalid shares amount")
+        || m.contains("invalid: signer")
 }
 
 use crate::api::{DataApiPosition, PolymarketApi};
@@ -74,8 +122,26 @@ pub struct CopySection {
     pub revert_trade: bool,
     #[serde(default = "default_multiplier")]
     pub size_multiplier: f64,
+    /// When > 0, each copied BUY spends this many USD and each copied SELL sells up to this
+    /// many USD worth of shares at the trade price (capped by the leader's sell size).
+    /// `size_multiplier` is ignored for sizing while this is set.
+    #[serde(default, alias = "copy_fixed_usd")]
+    pub copy_fixed_usd: f64,
+    /// Leaders in this list: only the first BUY per market is copied (key = slug, else condition id, else token).
+    /// Other targets are unchanged. SELLs are not deduped. In-memory until process restart.
+    #[serde(
+        default,
+        alias = "once_per_slug_addresses",
+        alias = "once_per_slug_address",
+        alias = "once_per_slug_targets"
+    )]
+    pub once_per_slug_addresses: Option<toml::Value>,
     #[serde(default = "default_poll_interval")]
     pub poll_interval_sec: f64,
+    /// Max concurrent CLOB copy orders. When unset, defaults scale with `target` count (floor 16, cap 128).
+    /// Env `COPY_TRADE_CONCURRENCY` overrides this when set.
+    #[serde(default, alias = "copy_trade_concurrency")]
+    pub copy_trade_concurrency: Option<u32>,
 }
 
 fn default_true() -> bool {
@@ -156,6 +222,44 @@ impl CopyTradingConfig {
         }
         valid
     }
+
+    /// Proxy addresses for “one BUY per market slug” mode. Invalid entries are logged and skipped.
+    pub fn once_per_slug_addresses(&self) -> HashSet<String> {
+        let raw = match self.copy.once_per_slug_addresses.as_ref() {
+            Some(v) => v.clone(),
+            None => return HashSet::new(),
+        };
+        let list: Vec<String> = if let Some(arr) = raw.as_array() {
+            arr
+                .iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        } else if let Some(s) = raw.as_str() {
+            vec![s.to_string()]
+        } else {
+            Vec::new()
+        };
+        let mut out = HashSet::new();
+        for s in list {
+            let t = s.trim().to_lowercase();
+            if t.is_empty() {
+                continue;
+            }
+            if is_valid_eth_address(&t) {
+                out.insert(t);
+            } else {
+                log::warn!(
+                    "once_per_slug_addresses skipped (not a valid 0x address): {:?}",
+                    if s.len() > 60 {
+                        format!("{}...", &s[..60])
+                    } else {
+                        s
+                    }
+                );
+            }
+        }
+        out
+    }
 }
 
 // ---------- Leader trade (from position diff) ----------
@@ -172,6 +276,21 @@ pub struct LeaderTrade {
     pub slug: Option<String>,
     pub outcome: Option<String>,
     pub end_date: Option<String>,
+}
+
+/// Stable key for “one copy per market” (slug when present, else condition id, else outcome token).
+pub fn trade_market_dedupe_key(trade: &LeaderTrade) -> String {
+    if let Some(ref s) = trade.slug {
+        let t = s.trim();
+        if !t.is_empty() {
+            return t.to_lowercase();
+        }
+    }
+    let m = trade.market.trim();
+    if !m.is_empty() {
+        return m.to_lowercase();
+    }
+    trade.asset_id.trim().to_lowercase()
 }
 
 // ---------- Filter ----------
@@ -215,6 +334,7 @@ pub async fn copy_trade(
     trade: &LeaderTrade,
     multiplier: f64,
     buy_amount_limit_usd: f64,
+    copy_fixed_usd: f64,
 ) -> Result<Option<(f64, f64)>> {
     // `trade.size` / `trade.price` are produced from JSON numeric payloads and
     // can sometimes end up in scientific notation (e.g. `1e-7`) depending on formatting.
@@ -233,17 +353,47 @@ pub async fn copy_trade(
     let size = parse_dec(&trade.size);
     let price = parse_dec(&trade.price);
     let mult = Decimal::from_f64_retain(multiplier).unwrap_or(Decimal::ONE);
+    let fixed_usd = Decimal::from_f64_retain(copy_fixed_usd).unwrap_or(Decimal::ZERO);
+    let use_fixed = copy_fixed_usd > 0.0 && fixed_usd > Decimal::ZERO;
 
     // Avoid nonsense orders when parsing failed.
     // SELL market orders don't require price; only BUY does.
-    if size <= Decimal::ZERO || mult == Decimal::ZERO {
+    if size <= Decimal::ZERO || (!use_fixed && mult == Decimal::ZERO) {
         return Ok(None);
     }
     if trade.side == "BUY" && price <= Decimal::ZERO {
         return Ok(None);
     }
+    if trade.side == "SELL" && use_fixed && price <= Decimal::ZERO {
+        return Ok(None);
+    }
 
-    let (amount_usd_or_shares, size_out, is_buy) = if trade.side == "BUY" {
+    let (amount_usd_or_shares, size_out, is_buy) = if use_fixed {
+        if trade.side == "BUY" {
+            let mut amount_usd = fixed_usd;
+            if buy_amount_limit_usd > 0.0 {
+                let limit = Decimal::from_f64_retain(buy_amount_limit_usd).unwrap_or(Decimal::ZERO);
+                if limit <= Decimal::ZERO {
+                    return Ok(None);
+                }
+                if amount_usd > limit {
+                    amount_usd = limit;
+                }
+            }
+            let size_out = amount_usd / price;
+            (
+                amount_usd.to_f64().unwrap_or(0.0),
+                size_out.to_f64().unwrap_or(0.0),
+                true,
+            )
+        } else {
+            // SELL: up to fixed_usd / price shares, not more than leader sold.
+            let cap_shares = fixed_usd / price;
+            let amount_shares = cap_shares.min(size);
+            let amt = amount_shares.to_f64().unwrap_or(0.0);
+            (amt, amt, false)
+        }
+    } else if trade.side == "BUY" {
         let amount_usd = size * price * mult;
         let capped = if buy_amount_limit_usd > 0.0 {
             let limit = Decimal::from_f64_retain(buy_amount_limit_usd).unwrap_or(Decimal::ZERO);
@@ -277,8 +427,16 @@ pub async fn copy_trade(
     const MIN_SELL_SHARES: f64 = 0.000_001;
     if is_buy && amount_usd_or_shares < MIN_BUY_USD {
         log::warn!(
-            "Copy skipped: BUY amount {} below minimum {} USD (leader size {} @ {} × multiplier {})",
-            amount_usd_or_shares, MIN_BUY_USD, trade.size, trade.price, multiplier
+            "Copy skipped: BUY amount {} below minimum {} USD (leader size {} @ {}{})",
+            amount_usd_or_shares,
+            MIN_BUY_USD,
+            trade.size,
+            trade.price,
+            if use_fixed {
+                format!("; copy_fixed_usd {}", copy_fixed_usd)
+            } else {
+                format!(" × multiplier {}", multiplier)
+            }
         );
         return Ok(None);
     }
@@ -302,12 +460,37 @@ pub async fn copy_trade(
         trade.side
     );
 
-    api.place_market_order_fast(&trade.asset_id, amount_usd_or_shares, &trade.side, Some("FAK"))
-        .await
-        .context("place_market_order failed")?;
-
-    let price_f = price.to_f64().unwrap_or(0.0);
-    Ok(Some((size_out, price_f)))
+    let max_attempts = copy_order_instant_max_attempts();
+    for attempt in 1..=max_attempts {
+        match api
+            .place_market_order_fast(&trade.asset_id, amount_usd_or_shares, &trade.side, Some("FAK"))
+            .await
+        {
+            Ok(_) => {
+                let price_f = price.to_f64().unwrap_or(0.0);
+                return Ok(Some((size_out, price_f)));
+            }
+            Err(e) => {
+                let chain = copy_market_order_error_chain_text(&e);
+                if copy_market_order_error_is_final(&chain) {
+                    log::warn!("Copy market order final-error (skip): {}", chain);
+                    return Err(e).context("place_market_order failed");
+                }
+                if attempt < max_attempts {
+                    log::warn!(
+                        "Copy market order attempt {}/{} failed (retrying instantly): {}",
+                        attempt,
+                        max_attempts,
+                        chain
+                    );
+                    continue;
+                }
+                log::warn!("Copy market order failed after {} attempt(s): {}", max_attempts, chain);
+                return Err(e).context("place_market_order failed");
+            }
+        }
+    }
+    unreachable!()
 }
 
 // ---------- Entry tracking (for exit loop) ----------

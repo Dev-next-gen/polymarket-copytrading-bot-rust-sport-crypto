@@ -1,7 +1,9 @@
 use crate::models::*;
 use anyhow::{Context, Result};
+use std::borrow::Cow;
 use std::convert::TryFrom;
 use reqwest::Client;
+use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -13,9 +15,11 @@ use log::{warn, info, error};
 use std::sync::Arc;
 
 use crate::clob_sdk;
+use alloy::hex::ToHexExt as _;
+use alloy::primitives::Address as AlloyAddress;
 use alloy::signers::local::LocalSigner;
 use alloy::signers::Signer as _;
-use alloy::primitives::Address as AlloyAddress;
+use alloy::sol_types::{Eip712Domain, SolStruct as _};
 
 // CTF (Conditional Token Framework) imports for redemption
 // Based on docs: https://docs.polymarket.com/developers/builders/relayer-client#redeem-positions
@@ -45,7 +49,37 @@ sol! {
     }
 }
 
+sol! {
+    /// EIP-712 payload for Polymarket `GET /auth/derive-api-key` and `POST /auth/api-key` (L1 auth).
+    struct PolymarketClobAuth {
+        address address;
+        string timestamp;
+        uint256 nonce;
+        string message;
+    }
+}
+
 type HmacSha256 = Hmac<Sha256>;
+
+#[derive(Debug, Deserialize)]
+struct ClobApiCredsResponse {
+    #[serde(default, alias = "apiKey")]
+    api_key: Option<String>,
+    secret: Option<String>,
+    passphrase: Option<String>,
+}
+
+impl ClobApiCredsResponse {
+    fn into_triple(self) -> Option<(String, String, String)> {
+        let k = self.api_key?.trim().to_string();
+        let s = self.secret?.trim().to_string();
+        let p = self.passphrase?.trim().to_string();
+        if k.is_empty() || s.is_empty() || p.is_empty() {
+            return None;
+        }
+        Some((k, s, p))
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct DataApiPosition {
@@ -80,6 +114,8 @@ pub struct PolymarketApi {
     authenticated: Arc<tokio::sync::Mutex<bool>>,
     clob_client_state: Arc<tokio::sync::Mutex<ClobClientState>>,
     clob_client_notify: Arc<tokio::sync::Notify>,
+    /// L2 creds from one-time L1 derive at startup when config omits api_key/secret/passphrase.
+    runtime_l2_creds: std::sync::RwLock<Option<(String, String, String)>>,
 }
 
 #[derive(Clone)]
@@ -133,6 +169,8 @@ impl PolymarketApi {
     ) -> Self {
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(10))
+            // Many parallel copy orders + position polls: avoid pool starvation with several leaders.
+            .pool_max_idle_per_host(64)
             .build()
             .expect("Failed to create HTTP client");
         
@@ -149,7 +187,133 @@ impl PolymarketApi {
             authenticated: Arc::new(tokio::sync::Mutex::new(false)),
             clob_client_state: Arc::new(tokio::sync::Mutex::new(ClobClientState::Empty)),
             clob_client_notify: Arc::new(tokio::sync::Notify::new()),
+            runtime_l2_creds: std::sync::RwLock::new(None),
         }
+    }
+
+    /// Config file L2 triple (non-empty strings).
+    fn config_l2_creds_filled(&self) -> bool {
+        let nonempty = |o: &Option<String>| {
+            o.as_ref()
+                .map(|s| !s.trim().is_empty())
+                .unwrap_or(false)
+        };
+        nonempty(&self.api_key) && nonempty(&self.api_secret) && nonempty(&self.api_passphrase)
+    }
+
+    /// Effective L2 credentials: runtime-derived (after [`authenticate`]) or from config.
+    pub fn effective_l2_creds(&self) -> (String, String, String) {
+        if let Ok(g) = self.runtime_l2_creds.read() {
+            if let Some((k, s, p)) = g.as_ref() {
+                return (k.clone(), s.clone(), p.clone());
+            }
+        }
+        (
+            self.api_key.clone().unwrap_or_default(),
+            self.api_secret.clone().unwrap_or_default(),
+            self.api_passphrase.clone().unwrap_or_default(),
+        )
+    }
+
+    async fn clob_l1_auth_headers<S: alloy::signers::Signer + Send + Sync>(
+        signer: &S,
+        chain_id: u64,
+        timestamp_secs: u64,
+        nonce: u64,
+    ) -> Result<Vec<(String, String)>> {
+        const CLOB_AUTH_MSG: &str = "This message attests that I control the given wallet";
+        let auth = PolymarketClobAuth {
+            address: signer.address(),
+            timestamp: timestamp_secs.to_string(),
+            nonce: U256::from(nonce),
+            message: CLOB_AUTH_MSG.to_owned(),
+        };
+        let domain = Eip712Domain {
+            name: Some(Cow::Borrowed("ClobAuthDomain")),
+            version: Some(Cow::Borrowed("1")),
+            chain_id: Some(U256::from(chain_id)),
+            ..Eip712Domain::default()
+        };
+        let hash: B256 = auth.eip712_signing_hash(&domain);
+        let sig = signer
+            .sign_hash(&hash)
+            .await
+            .context("EIP-712 sign Polymarket ClobAuth")?;
+        Ok(vec![
+            (
+                "POLY_ADDRESS".to_string(),
+                signer.address().encode_hex_with_prefix(),
+            ),
+            ("POLY_SIGNATURE".to_string(), sig.to_string()),
+            ("POLY_TIMESTAMP".to_string(), timestamp_secs.to_string()),
+            ("POLY_NONCE".to_string(), nonce.to_string()),
+        ])
+    }
+
+    /// Derive or create CLOB L2 API credentials via L1 wallet signature (single round-trip at startup).
+    async fn derive_clob_l2_credentials_at_startup(&self) -> Result<(String, String, String)> {
+        let pk = self
+            .private_key
+            .as_ref()
+            .context("private_key is required to derive CLOB api_key/api_secret/api_passphrase when they are missing from config.json")?;
+        let chain_id = polygon();
+        let signer = LocalSigner::from_str(pk.trim())
+            .context("Invalid private_key for L1 CLOB auth")?
+            .with_chain_id(Some(chain_id));
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .context("system time")?
+            .as_secs();
+        let headers = Self::clob_l1_auth_headers(&signer, chain_id, ts, 0).await?;
+        let base = self.clob_url.trim_end_matches('/');
+
+        let try_parse = |text: &str| -> Option<(String, String, String)> {
+            let v: ClobApiCredsResponse = serde_json::from_str(text).ok()?;
+            v.into_triple()
+        };
+
+        let derive_url = format!("{}/auth/derive-api-key", base);
+        let mut req = self.client.get(&derive_url);
+        for (k, v) in &headers {
+            req = req.header(k, v);
+        }
+        let resp = req
+            .send()
+            .await
+            .context("GET /auth/derive-api-key")?;
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        if status.is_success() {
+            if let Some(t) = try_parse(&text) {
+                return Ok(t);
+            }
+        }
+        log::warn!(
+            "CLOB derive-api-key HTTP {} — trying POST /auth/api-key. Response (truncated): {:.240}",
+            status,
+            text
+        );
+
+        let create_url = format!("{}/auth/api-key", base);
+        let mut req = self.client.post(&create_url);
+        for (k, v) in &headers {
+            req = req.header(k, v);
+        }
+        let resp = req.send().await.context("POST /auth/api-key")?;
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        if !status.is_success() {
+            anyhow::bail!(
+                "CLOB POST /auth/api-key failed HTTP {}: {}",
+                status,
+                if text.len() > 400 {
+                    format!("{}...", &text[..400])
+                } else {
+                    text
+                }
+            );
+        }
+        try_parse(&text).context("POST /auth/api-key: missing apiKey, secret, or passphrase in JSON body")
     }
 
     async fn ensure_clob_client(&self) -> Result<u64> {
@@ -169,9 +333,7 @@ impl PolymarketApi {
                         let clob_url = self.clob_url.clone();
                         let private_key = self.private_key.clone()
                             .ok_or_else(|| anyhow::anyhow!("Private key is required. Please set private_key in config.json"))?;
-                        let api_key = self.api_key.clone().unwrap_or_default();
-                        let api_secret = self.api_secret.clone().unwrap_or_default();
-                        let api_passphrase = self.api_passphrase.clone().unwrap_or_default();
+                        let (api_key, api_secret, api_passphrase) = self.effective_l2_creds();
                         let sig_type = match (self.proxy_wallet_address.is_some(), self.signature_type) {
                             (true, Some(0)) => anyhow::bail!("proxy_wallet_address is set but signature_type is 0 (EOA). Use 1 (POLY_PROXY) or 2 (GNOSIS_SAFE)."),
                             (true, None) => {
@@ -257,8 +419,10 @@ impl PolymarketApi {
         body: &str,
         timestamp: u64,
     ) -> Result<String> {
-        let secret = self.api_secret.as_ref()
-            .ok_or_else(|| anyhow::anyhow!("API secret is required for authenticated requests"))?;
+        let (_k, secret, _p) = self.effective_l2_creds();
+        if secret.is_empty() {
+            anyhow::bail!("API secret is required for authenticated requests (config or startup L1 derive)");
+        }
         
         // Create message: method + path + body + timestamp
         let message = format!("{}{}{}{}", method, path, body, timestamp);
@@ -271,11 +435,11 @@ impl PolymarketApi {
             use base64::Engine;
             
             // First try base64url (URL_SAFE engine)
-            if let Ok(bytes) = general_purpose::URL_SAFE.decode(secret) {
+            if let Ok(bytes) = general_purpose::URL_SAFE.decode(secret.as_str()) {
                 bytes
             }
             // Then try standard base64
-            else if let Ok(bytes) = general_purpose::STANDARD.decode(secret) {
+            else if let Ok(bytes) = general_purpose::STANDARD.decode(secret.as_str()) {
                 bytes
             }
             // Finally, use raw bytes if both fail
@@ -329,8 +493,9 @@ impl PolymarketApi {
         path: &str,
         body: &str,
     ) -> Result<reqwest::RequestBuilder> {
-        // Only add auth headers if we have all required credentials
-        if self.api_key.is_none() || self.api_secret.is_none() || self.api_passphrase.is_none() {
+        // Only add auth headers if we have all required credentials (non-empty).
+        let nonempty = |o: &Option<String>| o.as_ref().map(|s| !s.trim().is_empty()).unwrap_or(false);
+        if !nonempty(&self.api_key) || !nonempty(&self.api_secret) || !nonempty(&self.api_passphrase) {
             return Ok(request);
         }
 
@@ -1955,7 +2120,8 @@ impl PolymarketApi {
     }
 
     pub fn has_api_credentials(&self) -> bool {
-        self.api_key.is_some() && self.api_secret.is_some() && self.api_passphrase.is_some()
+        let (k, s, p) = self.effective_l2_creds();
+        !k.trim().is_empty() && !s.trim().is_empty() && !p.trim().is_empty()
     }
 
     pub fn get_wallet_address(&self) -> Result<String> {
@@ -2364,6 +2530,24 @@ impl PolymarketApi {
 
     pub async fn merge_complete_sets(&self, condition_id: &str) -> Result<RedeemResponse> {
         self.redeem_tokens(condition_id, "", "Up+Down (merge complete sets)").await
+    }
+
+    /// Fetch the most recent trades for a user from the Data API REST endpoint.
+    /// Used as a polling fallback alongside the WebSocket to ensure no fills are missed.
+    pub async fn get_user_recent_trades(&self, user: &str, limit: u32) -> Result<Vec<Value>> {
+        let url = "https://data-api.polymarket.com/activity";
+        let limit_str = limit.to_string();
+        let resp = self.client
+            .get(url)
+            .query(&[("user", user), ("limit", limit_str.as_str())])
+            .send()
+            .await
+            .context("GET /activity failed")?;
+        if !resp.status().is_success() {
+            anyhow::bail!("GET /activity returned {}", resp.status());
+        }
+        let trades: Vec<Value> = resp.json().await.context("GET /activity JSON parse")?;
+        Ok(trades)
     }
 }
 

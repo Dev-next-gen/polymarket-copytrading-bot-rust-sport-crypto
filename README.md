@@ -123,7 +123,8 @@ target_address   = "0x1979ae6B7E6534dE9c4539D0c205E582cA637C9D"
 # or multi-target:
 # target_addresses = ["0x...", "0x..."]
 
-size_multiplier   = 0.01    # fraction of their trade size you place
+size_multiplier   = 0.01    # fraction of their trade size you place (ignored if copy_fixed_usd > 0)
+# copy_fixed_usd  = 10     # optional: every copied BUY spends this USDC; SELLs exit up to this $ in shares (capped by leader size)
 poll_interval_sec = 0.5
 
 [exit]
@@ -137,7 +138,7 @@ entry_trade_sec           = 0   # ignore trades this many seconds after market o
 trade_sec_from_resolve    = 0   # stop copying N seconds before resolve
 ```
 
-> **Finding the right address:** The bot copies by **proxy wallet**, not by username or profile URL. If copy-trading never fires, watch startup logs — the bot prints `Activity from proxy 0x... is not in your target list` when a leader trades. Add that exact address. Invalid entries are skipped with a warning.
+> **Finding the right address:** Match the **wallet Polymarket attaches to that trader’s activity** (usually `proxyWallet` on their profile), not a username or URL. The bot listens to **activity `trades` and `orders_matched`**, and matches **proxyWallet, userAddress, maker,** and other common fields against your list. If a target never fires, run with `LOG_UNMATCHED_PROXIES=1` — when that wallet trades elsewhere on the feed you’ll see `Activity from wallet 0x… is not in your target list`; add the address shown (or the one on their Polymarket profile if different).
 
 **`.env`** *(optional — for the AI Agent)*:
 
@@ -181,9 +182,9 @@ All logic runs; no real orders are placed. Use this to evaluate a leader's edge,
  └─────────┬───────────┘
            │  match
            ▼
- ┌─────────────────────┐    ┌─────────────────────────┐
+ ┌─────────────────────┐     ┌─────────────────────────┐
  │   Copy trade logic  │───▶│  Exit loop (TP/SL/trail) │
- └─────────┬───────────┘    └─────────────────────────┘
+ └─────────┬───────────┘     └─────────────────────────┘
            │
            ▼
  ┌──────────────────────────────────┐
@@ -232,6 +233,9 @@ When multiple leaders enter the same market simultaneously, the agent can help y
 |---------|-----|-------------|
 | `[copy]` | `target_address` / `target_addresses` | One wallet or a list to follow |
 | `[copy]` | `size_multiplier` | Your trade size as a fraction of the leader's |
+| `[copy]` | `copy_fixed_usd` | Fixed USDC per copy (BUY = spend this; SELL = up to this $ in shares, capped by leader); disables multiplier-based sizing |
+| `[copy]` | `once_per_slug_addresses` | For these leaders only: first BUY per market (slug) is copied; list as many addresses as you need (in-memory until restart) |
+| `[copy]` | `copy_trade_concurrency` | Max parallel CLOB copy orders; default scales with target count (16–128). Env `COPY_TRADE_CONCURRENCY` overrides |
 | `[copy]` | `revert_trade` | Mirror exits (sell when they sell) |
 | `[exit]` | `take_profit` / `stop_loss` / `trailing_stop` | Auto-exit rules (0 = off) |
 | `[filter]` | `buy_amount_limit_in_usd` | Skip trades above this size |
