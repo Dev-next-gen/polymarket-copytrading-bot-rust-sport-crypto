@@ -14,6 +14,7 @@ config2.json
 *.log
 log.txt
 history.toml
+trade.toml
 
 # Leptos / Trunk frontend build
 frontend/dist/
@@ -33,5 +34,3 @@ Thumbs.db
 # Cargo.lock is usually committed for apps (reproducible builds)
 
 STRUCTURE_README.md
-
-trade.toml
