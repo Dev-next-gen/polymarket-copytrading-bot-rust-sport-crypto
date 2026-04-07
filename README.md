@@ -41,6 +41,16 @@ Five months of backtesting, simulation, and live trading with a small balance ha
 
 ---
 
+## Proven results — real money, real trades
+
+This bot is **actively generating profit** in live markets. Not paper trading, not backtests — real USDC, real fills, real P&L.
+
+I'm happy to share **full trade history, wallet proof, and live performance screenshots** in a private conversation. No vague claims — just verifiable on-chain results.
+
+> **Want to see the numbers?** DM me on Telegram — **[@femtodev](https://t.me/femtodev)**. I'll walk you through the setup, share proof, and answer any questions. You won't be disappointed.
+
+---
+
 ## What you get
 
 <table>
