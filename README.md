@@ -15,6 +15,8 @@
 
 *Built in Rust · Real-time WebSocket · Web Dashboard · AI Research Agent*
 
+[![GitHub Stars](https://img.shields.io/github/stars/Dev-next-gen/polymarket-copytrading-bot-rust-sport-crypto?style=social)](https://github.com/Dev-next-gen/polymarket-copytrading-bot-rust-sport-crypto/stargazers)
+
 <br/>
 
 [![Rust](https://img.shields.io/badge/Rust-1.70+-CE4A1F?style=flat-square&logo=rust&logoColor=white)](https://rustlang.org)
