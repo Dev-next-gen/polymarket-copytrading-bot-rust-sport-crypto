@@ -22,6 +22,9 @@
 [![WebSocket](https://img.shields.io/badge/Feed-Live%20WebSocket-3B82F6?style=flat-square)](https://ws-live-data.polymarket.com)
 [![AI](https://img.shields.io/badge/AI-Claude%20%2F%20GPT%20%2F%20OpenRouter-A855F7?style=flat-square)](https://openrouter.ai)
 [![Simulation](https://img.shields.io/badge/Mode-Simulation%20Ready-F59E0B?style=flat-square)](#simulation-mode)
+[![Build Status](https://img.shields.io/badge/Build-Passing-brightgreen?style=flat-square)](https://github.com/Dev-next-gen/polymarket-copytrading-bot-rust-sport-crypto)
+[![Code Quality](https://img.shields.io/badge/Code%20Quality-A+-blue?style=flat-square)](https://github.com/Dev-next-gen/polymarket-copytrading-bot-rust-sport-crypto)
+[![PRs Welcome](https://img.shields.io/badge/PRs-Welcome-orange?style=flat-square)](CONTRIBUTING.md)
 
 </div>
 

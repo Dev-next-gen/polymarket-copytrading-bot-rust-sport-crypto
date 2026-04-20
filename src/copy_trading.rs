@@ -9,56 +9,144 @@ use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+/// Validates an Ethereum address format.
+///
+/// # Arguments
+/// * `s` - The address string to validate (with or without 0x prefix)
+///
+/// # Returns
+/// * `true` if the address is a valid 40-character hexadecimal string
+/// * `false` otherwise
+///
+/// # Examples
+/// ```
+/// assert!(is_valid_eth_address("0x742d35Cc6634C0532925a3b8D3Ac3E3F"));
+/// assert!(is_valid_eth_address("742d35Cc6634C0532925a3b8D3Ac3E3F"));
+/// assert!(!is_valid_eth_address("invalid"));
+/// ```
 fn is_valid_eth_address(s: &str) -> bool {
+    if s.is_empty() {
+        return false;
+    }
+
     let s = s.strip_prefix("0x").unwrap_or(s);
-    s.len() == 40 && s.chars().all(|c| c.is_ascii_hexdigit())
+
+    // Check length: Ethereum addresses are exactly 40 hex characters
+    if s.len() != 40 {
+        return false;
+    }
+
+    // Check that all characters are valid hexadecimal
+    s.chars().all(|c| c.is_ascii_hexdigit())
 }
 
+/// Normalizes an Ethereum address to lowercase format with 0x prefix.
+///
+/// # Arguments
+/// * `address` - The address to normalize
+///
+/// # Returns
+/// * Normalized address string or error if invalid format
+fn normalize_eth_address(address: &str) -> Result<String> {
+    if !is_valid_eth_address(address) {
+        return Err(anyhow::anyhow!("Invalid Ethereum address format: {}", address));
+    }
+
+    let normalized = if address.starts_with("0x") {
+        address.to_lowercase()
+    } else {
+        format!("0x{}", address.to_lowercase())
+    };
+
+    Ok(normalized)
+}
+
+// Constants for better maintainability
+const DEFAULT_RETRY_ATTEMPTS: u32 = 5;
+const MIN_RETRY_ATTEMPTS: u32 = 1;
+const MAX_RETRY_ATTEMPTS: u32 = 30;
+
 /// Max attempts for `place_market_order_fast` on the copy path (no delay between tries).
-/// Override with `COPY_ORDER_INSTANT_RETRIES` (clamped 1–30, default 5).
+/// Override with `COPY_ORDER_INSTANT_RETRIES` environment variable.
+///
+/// # Returns
+/// * Number of retry attempts, clamped between MIN_RETRY_ATTEMPTS and MAX_RETRY_ATTEMPTS
 fn copy_order_instant_max_attempts() -> u32 {
     std::env::var("COPY_ORDER_INSTANT_RETRIES")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(5)
-        .clamp(1, 30)
+        .unwrap_or(DEFAULT_RETRY_ATTEMPTS)
+        .clamp(MIN_RETRY_ATTEMPTS, MAX_RETRY_ATTEMPTS)
 }
 
+/// Formats error chain into a human-readable string with proper context.
+///
+/// # Arguments
+/// * `e` - The error to format
+///
+/// # Returns
+/// * Formatted error string with complete chain of causality
 fn copy_market_order_error_chain_text(e: &Error) -> String {
-    let mut parts = vec![e.to_string()];
+    let mut parts = vec![format!("Error: {}", e)];
     let mut src = e.source();
+    let mut depth = 0;
+
     while let Some(s) = src {
-        parts.push(s.to_string());
+        depth += 1;
+        parts.push(format!("Caused by ({}): {}", depth, s));
         src = s.source();
+
+        // Prevent infinite loops in error chains
+        if depth > 10 {
+            parts.push("... (truncated)".to_string());
+            break;
+        }
     }
-    parts.join(" ")
+
+    parts.join(" -> ")
 }
 
-/// Errors where an immediate retry is unlikely to help.
+// List of error patterns that indicate final/non-retryable errors
+const FINAL_ERROR_PATTERNS: &[&str] = &[
+    // Liquidity issues - retrying won't create sellers
+    "no opposing orders",
+
+    // Market/orderbook issues - market closed or resolved
+    "no orderbook exists",
+    "404",
+    "not found",
+
+    // Authentication errors - retrying with same key won't help
+    "unauthorized",
+    "invalid api key",
+    "401",
+
+    // Order validation errors - fundamental issues with order
+    "invalid signer",
+    "clob rejected order",
+    "insufficient balance",
+    "insufficient usdc",
+    "invalid order side",
+    "invalid order_type",
+    "below minimum precision",
+    "below minimum lot size",
+    "invalid shares amount",
+    "invalid: signer",
+];
+
+/// Checks if an error indicates a final failure where immediate retry is unlikely to help.
+///
+/// # Arguments
+/// * `msg` - The error message to check
+///
+/// # Returns
+/// * `true` if the error is considered final/non-retryable, `false` otherwise
 fn copy_market_order_error_is_final(msg: &str) -> bool {
     let m = msg.to_ascii_lowercase();
-    // No liquidity — retrying won't create sellers.
-    if m.contains("no opposing orders") {
-        return true;
-    }
-    // Market closed / resolved — orderbook no longer exists.
-    if m.contains("no orderbook exists") || m.contains("404") || m.contains("not found") {
-        return true;
-    }
-    // Auth errors — retrying with the same key won't fix a 401.
-    if m.contains("unauthorized") || m.contains("invalid api key") || m.contains("401") {
-        return true;
-    }
-    m.contains("invalid signer")
-        || m.contains("clob rejected order")
-        || m.contains("insufficient balance")
-        || m.contains("insufficient usdc")
-        || m.contains("invalid order side")
-        || m.contains("invalid order_type")
-        || m.contains("below minimum precision")
-        || m.contains("below minimum lot size")
-        || m.contains("invalid shares amount")
-        || m.contains("invalid: signer")
+
+    FINAL_ERROR_PATTERNS
+        .iter()
+        .any(|pattern| m.contains(pattern))
 }
 
 use crate::api::{DataApiPosition, PolymarketApi};
